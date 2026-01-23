@@ -103,6 +103,8 @@ export class ClusterDetector {
     /**
      * Find trades synchronized with other wallets
      * (same market, same side, within 30 minutes)
+     * 
+     * OPTIMIZED: Uses aggregation pipeline instead of N+1 queries
      */
     private async findSynchronizedTrades(
         walletAddress: string
@@ -111,35 +113,37 @@ export class ClusterDetector {
             // Get this wallet's recent trades
             const walletTrades = await Trade.find({ walletAddress })
                 .sort({ timestamp: -1 })
-                .limit(20);
+                .limit(20)
+                .lean();
 
             if (walletTrades.length === 0) {
                 return { count: 0, wallets: [] };
             }
 
+            // Build $or conditions for all trades at once (batch query)
+            const orConditions = walletTrades.map(trade => ({
+                walletAddress: { $ne: walletAddress },
+                marketId: trade.marketId,
+                side: trade.side,
+                timestamp: {
+                    $gte: new Date(trade.timestamp.getTime() - 30 * 60 * 1000),
+                    $lte: new Date(trade.timestamp.getTime() + 30 * 60 * 1000),
+                },
+            }));
+
+            // Single batched query instead of N separate queries
+            const synchronizedTrades = await Trade.find({
+                $or: orConditions,
+            }).select('walletAddress').lean();
+
+            // Deduplicate and count
             const synchronizedWallets = new Set<string>();
-            let syncCount = 0;
-
-            for (const trade of walletTrades) {
-                // Find other wallets trading same market/side within 30 min window
-                const windowStart = new Date(trade.timestamp.getTime() - 30 * 60 * 1000);
-                const windowEnd = new Date(trade.timestamp.getTime() + 30 * 60 * 1000);
-
-                const synchronizedTrades = await Trade.find({
-                    walletAddress: { $ne: walletAddress },
-                    marketId: trade.marketId,
-                    side: trade.side,
-                    timestamp: { $gte: windowStart, $lte: windowEnd },
-                }).select('walletAddress');
-
-                for (const syncTrade of synchronizedTrades) {
-                    synchronizedWallets.add(syncTrade.walletAddress);
-                    syncCount++;
-                }
+            for (const trade of synchronizedTrades) {
+                synchronizedWallets.add(trade.walletAddress);
             }
 
             return {
-                count: syncCount,
+                count: synchronizedTrades.length,
                 wallets: Array.from(synchronizedWallets),
             };
         } catch (error) {
@@ -147,6 +151,7 @@ export class ClusterDetector {
             return { count: 0, wallets: [] };
         }
     }
+
 
     /**
      * Set funding source for a wallet (called when CEX deposit detected)

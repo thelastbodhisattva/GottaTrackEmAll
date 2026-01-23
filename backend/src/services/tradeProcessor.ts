@@ -59,17 +59,18 @@ export class TradeProcessor {
     }
 
     /**
-     * Check if a trade has already been processed (replay protection)
+     * Atomically check if a trade has been processed and mark it if not.
+     * Returns true if this is a NEW trade (not seen before), false if duplicate.
+     * This prevents race conditions where two concurrent calls could both pass the check.
      */
-    private isReplayTrade(tradeId: string): boolean {
-        return this.processedTradeIds.has(tradeId);
-    }
-
-    /**
-     * Mark a trade as processed
-     */
-    private markAsProcessed(tradeId: string): void {
+    private tryMarkAsProcessed(tradeId: string): boolean {
+        // Atomic check-and-set: if already present, return false (duplicate)
+        if (this.processedTradeIds.has(tradeId)) {
+            return false;
+        }
+        // Mark as processed atomically
         this.processedTradeIds.set(tradeId, Date.now());
+        return true;
     }
 
     /**
@@ -92,13 +93,11 @@ export class TradeProcessor {
             return null;
         }
 
-        // Replay protection: skip if already processed
-        if (this.isReplayTrade(trade.id)) {
+        // Atomic replay protection: skip if already processed
+        // This combines check + set into one operation to prevent race conditions
+        if (!this.tryMarkAsProcessed(trade.id)) {
             return null;
         }
-
-        // Mark as processed immediately to prevent duplicates
-        this.markAsProcessed(trade.id);
 
         // Filter non-whale trades (silent unless it's a whale)
         if (trade.sizeUsd < this.whaleThreshold) {

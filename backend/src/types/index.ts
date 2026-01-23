@@ -93,6 +93,12 @@ export interface InsiderScore {
     confidence: ConfidenceLevel;
     ethicsNote: string;
     calculatedAt: Date;
+    /** 
+     * List of factors that failed during calculation (returned 0 due to errors).
+     * Empty array means all factors calculated successfully.
+     * Used to indicate degraded/partial scoring mode.
+     */
+    degradedFactors?: ('diversification' | 'onChain' | 'connection' | 'cluster')[];
 }
 
 // ============================================================================

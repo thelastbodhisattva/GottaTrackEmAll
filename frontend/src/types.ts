@@ -2,7 +2,18 @@
 // Frontend Types (mirroring backend types)
 // ============================================================================
 
-export type MarketCategory = 'geopolitics' | 'war' | 'crypto' | 'other';
+// Must match backend config.targetCategories exactly
+export type MarketCategory =
+    | 'geopolitics'
+    | 'war'
+    | 'crypto'
+    | 'sports'
+    | 'esports'
+    | 'popculture'
+    | 'entertainment'
+    | 'science'
+    | 'other';
+
 export type TradeSide = 'YES' | 'NO';
 export type ConfidenceLevel = 'low' | 'medium' | 'high';
 export type ViewMode = 'efficiency' | 'neutral';
@@ -27,6 +38,18 @@ export interface InsiderScore {
     confidence: ConfidenceLevel;
     ethicsNote: string;
     calculatedAt: string;
+    /** 
+     * List of factors that failed during calculation (returned 0 due to errors).
+     * Empty/undefined means all factors calculated successfully.
+     */
+    degradedFactors?: ('diversification' | 'onChain' | 'connection' | 'cluster')[];
+}
+
+/** Market traded info for category analysis */
+export interface MarketTraded {
+    id: string;
+    title?: string;
+    category?: string;
 }
 
 export interface WalletProfile {
@@ -35,11 +58,12 @@ export interface WalletProfile {
     totalPnl: number;
     winRate: number;
     avgTradeSize: number;
-    marketsTraded: string[];
+    marketsTraded: MarketTraded[] | string[];  // Support both formats for backwards compatibility
     firstSeen: string;
     lastActive: string;
     tags: string[];
 }
+
 
 export interface EnrichedTrade {
     id: string;

@@ -2,6 +2,7 @@ import { WebhookClient } from 'discord.js';
 import { config } from '../config/index.js';
 import { EnrichedTrade, AlertConfig } from '../types/index.js';
 import { HansonQuotes } from '../utils/hansonQuotes.js';
+import { isTransientError, getErrorMessage, getErrorCode } from '../utils/shared.js';
 
 /**
  * Discord webhook alert service for whale and insider notifications
@@ -46,14 +47,12 @@ export class AlertService {
                 console.log(`[AlertService] Sent alert for trade ${trade.id}`);
                 return; // Success, exit retry loop
             } catch (error: unknown) {
-                const err = error as any;
-                const isTransient = err?.code === 'ECONNRESET' || err?.code === 'ETIMEDOUT';
-                if (isTransient && attempt < maxRetries) {
+                if (isTransientError(error) && attempt < maxRetries) {
                     const delay = 1000 * Math.pow(2, attempt - 1); // Exponential backoff
                     console.warn(`[AlertService] Discord send failed (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
                     await new Promise(resolve => setTimeout(resolve, delay));
                 } else {
-                    console.error('[AlertService] Failed to send Discord alert:', err);
+                    console.error('[AlertService] Failed to send Discord alert:', getErrorMessage(error));
                     return; // Give up after max retries or non-transient error
                 }
             }
@@ -80,14 +79,14 @@ export class AlertService {
                 console.log('[AlertService] ✅ Sent test message to Discord');
                 return; // Success
             } catch (error: unknown) {
-                const err = error as any;
-                const isTransient = err?.code === 'ECONNRESET' || err?.code === 'ETIMEDOUT' || err?.code === 500;
+                const errorCode = getErrorCode(error);
+                const isTransient = isTransientError(error) || errorCode === 500;
                 if (isTransient && attempt < maxRetries) {
                     const delay = 1000 * Math.pow(2, attempt - 1); // Exponential backoff: 1s, 2s, 4s
                     console.warn(`[AlertService] Discord test message failed (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
                     await new Promise(resolve => setTimeout(resolve, delay));
                 } else {
-                    console.error('[AlertService] ❌ Failed to send test message:', err?.message || err);
+                    console.error('[AlertService] ❌ Failed to send test message:', getErrorMessage(error));
                     return; // Give up
                 }
             }

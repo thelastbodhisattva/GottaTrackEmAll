@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { EnrichedTrade, MarketCategory } from '../types';
 import { ScoreDonut } from './ScoreDonut';
 
@@ -173,9 +173,8 @@ export function WhaleTape({
                     </thead>
                     <tbody>
                         {paginatedTrades.map((trade) => (
-                            <>
+                            <React.Fragment key={trade.id}>
                                 <tr
-                                    key={trade.id}
                                     className={`${trade.isFlagged ? 'flagged' : ''} ${expandedRow === trade.id ? 'expanded' : ''}`}
                                     onClick={() => toggleRow(trade.id)}
                                     style={{ cursor: 'pointer' }}
@@ -221,7 +220,7 @@ export function WhaleTape({
                                 </tr>
                                 {/* Expanded row showing score breakdown */}
                                 {expandedRow === trade.id && (
-                                    <tr key={`${trade.id}-expanded`} className="expanded-row">
+                                    <tr className="expanded-row">
                                         <td colSpan={7}>
                                             <div className="score-breakdown-grid">
                                                 {Object.entries(trade.insiderScore.breakdown)
@@ -238,7 +237,7 @@ export function WhaleTape({
                                         </td>
                                     </tr>
                                 )}
-                            </>
+                            </React.Fragment>
                         ))}
                     </tbody>
                 </table>

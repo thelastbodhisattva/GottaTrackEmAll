@@ -39,6 +39,59 @@ export const config = {
 
     // Target market categories (all categories enabled for whale alerts)
     targetCategories: ['geopolitics', 'war', 'crypto', 'sports', 'esports', 'popculture', 'entertainment', 'science', 'other'] as const,
+
+    // ==========================================================================
+    // Scoring Constants (extracted from insiderScorer.ts)
+    // ==========================================================================
+    scoring: {
+        /** Maximum raw score before normalization (sum of all factor max values) */
+        maxRawScore: 210,
+        /** Low volume market daily threshold in USD */
+        lowVolumeThreshold: 10000,
+        /** Additional score required for low-volume markets */
+        lowVolumeScoreBonus: 10,
+    },
+
+    // ==========================================================================
+    // Memory/Cache Limits
+    // ==========================================================================
+    limits: {
+        /** Max trades in memory history */
+        tradeHistorySize: 1000,
+        /** Max wallets in profiler cache */
+        walletStoreSize: 5000,
+        /** Max processed trade IDs to track (for replay protection) */
+        processedTradeIdsSize: 10000,
+        /** How long to keep processed trade IDs (ms) - 1 hour */
+        processedTradeIdsTtl: 60 * 60 * 1000,
+    },
+
+    // ==========================================================================
+    // Cluster Detection
+    // ==========================================================================
+    cluster: {
+        /** Time window for synchronized trade detection (ms) - 30 minutes */
+        syncWindowMs: 30 * 60 * 1000,
+        /** Minimum days to consider wallet "fresh" */
+        freshWalletAgeDays: 7,
+        /** Minimum trades for wallet to not be "fresh" */
+        freshWalletMinTrades: 10,
+        /** Minimum fresh wallets to detect cluster */
+        clusterMinWallets: 3,
+        /** Volume threshold for split bets bonus */
+        splitBetsVolumeThreshold: 20000,
+    },
+
+    // ==========================================================================
+    // Retry Configuration
+    // ==========================================================================
+    retry: {
+        /** Maximum retries for Discord webhooks */
+        discordMaxRetries: 3,
+        /** Base delay for exponential backoff (ms) */
+        baseDelayMs: 1000,
+    },
 } as const;
 
 export type Config = typeof config;
+

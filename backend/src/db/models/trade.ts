@@ -90,4 +90,13 @@ tradeSchema.index({ walletAddress: 1, timestamp: -1 });
 tradeSchema.index({ marketId: 1, 'insiderScore.isFlagged': 1 });
 tradeSchema.index({ 'insiderScore.isFlagged': 1, marketResolved: 1 });
 
+// Indexes for cluster detection (findSynchronizedTrades)
+// Used for: finding trades on same market/side within time window
+tradeSchema.index({ marketId: 1, side: 1, timestamp: -1 });
+
+// Indexes for filtered trade listings (GET /api/trades)
+tradeSchema.index({ marketCategory: 1, timestamp: -1 });
+tradeSchema.index({ 'insiderScore.isFlagged': 1, timestamp: -1 });
+tradeSchema.index({ marketCategory: 1, 'insiderScore.isFlagged': 1, timestamp: -1 });
+
 export const Trade = model<ITrade>('Trade', tradeSchema);

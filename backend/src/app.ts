@@ -30,6 +30,10 @@ import { createMetricsRouter } from './api/metricsRoutes.js';
 // =============================================================================
 
 console.log('🐋 Starting Polymarket Whale Tracker...');
+
+// Centralized version
+const APP_VERSION = '2.0.0';
+
 console.log(`   Environment: ${config.nodeEnv}`);
 console.log(`   Whale Threshold: $${config.whaleThresholdUsd}`);
 console.log(`   Insider Score Threshold: ${config.insiderScoreThreshold}`);
@@ -151,9 +155,19 @@ app.use('/api/admin', adminLimiter);
 app.use('/api/trades', tradeLimiter);
 app.use('/api', apiLimiter);
 
-// API routes
-app.use('/api', createRouter(walletProfiler, marketService, tradeHistory));
-app.use('/api/metrics', createMetricsRouter(outcomeTracker));
+// API version constant
+const API_VERSION = 'v1';
+
+// API routes (versioned: /api/v1)
+const router = createRouter(walletProfiler, marketService, tradeHistory);
+const metricsRouter = createMetricsRouter(outcomeTracker);
+
+app.use(`/api/${API_VERSION}`, router);
+app.use(`/api/${API_VERSION}/metrics`, metricsRouter);
+
+// Backwards compatibility: also mount at /api (deprecation warning in future)
+app.use('/api', router);
+app.use('/api/metrics', metricsRouter);
 app.use('/api/admin', createAdminRouter(tradeHistory, insiderScorer));
 
 // Health check endpoint
@@ -169,7 +183,7 @@ app.get('/health', (_req, res) => {
     res.status(status === 'unhealthy' ? 503 : 200).json({
         status,
         uptime,
-        version: '1.0.0',
+        version: APP_VERSION,
         services: {
             mongodb: mongoConnected,
             redis: redisConnected,
@@ -200,7 +214,7 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
 app.get('/', (_req, res) => {
     res.json({
         name: 'Polymarket Whale Tracker',
-        version: '1.0.0',
+        version: APP_VERSION,
         status: 'running',
         endpoints: {
             health: '/health',
@@ -222,31 +236,46 @@ app.get('/', (_req, res) => {
 export const server = http.createServer(app);
 
 // WebSocket server for frontend real-time updates
-const wss = new WebSocketServer({ server, path: '/ws' });
+// Use verifyClient for proper URL access during handshake
+const wss = new WebSocketServer({
+    server,
+    path: '/ws',
+    verifyClient: (info, callback) => {
+        // Extract token from URL during handshake (before upgrade)
+        try {
+            const url = new URL(info.req.url || '', `http://${info.req.headers.host || 'localhost'}`);
+            const token = url.searchParams.get('token');
+
+            if (token) {
+                const auth = validateWsToken(token);
+                if (!auth.valid) {
+                    console.log('[WS-Server] Invalid token rejected during handshake');
+                    callback(false, 401, 'Invalid authentication token');
+                    return;
+                }
+                // Store permissions in headers for later access
+                (info.req as unknown as Record<string, unknown>)._wsPermissions = auth.permissions;
+            }
+            callback(true);
+        } catch (error) {
+            console.error('[WS-Server] Error verifying client:', error);
+            callback(true); // Allow connection on error, default to public
+        }
+    }
+});
 
 const clients = new Set<WebSocket>();
 
-wss.on('connection', (ws: WebSocket) => {
+wss.on('connection', (ws: WebSocket, request: http.IncomingMessage) => {
     console.log('[WS-Server] Client connected');
     clients.add(ws);
 
-    // Parse URL for token
-    // Cast to any for upgradeReq (standard workaround for ws types issue)
-    const req = (ws as any).upgradeReq || { url: '/ws' }; // Fallback
-    const url = new URL(req.url || '', 'http://localhost');
-    const token = url.searchParams.get('token');
+    // Get permissions from verifyClient (stored during handshake)
+    const reqWithPerms = request as unknown as Record<string, unknown>;
+    const permissions: string[] = (reqWithPerms._wsPermissions as string[]) || ['public'];
 
-    // Check auth if token provided
-    let permissions: string[] = ['public'];
-    if (token) {
-        const auth = validateWsToken(token);
-        if (auth.valid) {
-            permissions = auth.permissions;
-            console.log(`[WS-Server] Client authenticated with permissions: ${permissions.join(', ')}`);
-        } else {
-            console.log('[WS-Server] Invalid token provided');
-            ws.send(JSON.stringify({ type: 'error', message: 'Invalid authentication token' }));
-        }
+    if (permissions.length > 1 || (permissions.length === 1 && permissions[0] !== 'public')) {
+        console.log(`[WS-Server] Client authenticated with permissions: ${permissions.join(', ')}`);
     }
 
     wsConnectionsGauge.inc();
@@ -257,9 +286,8 @@ wss.on('connection', (ws: WebSocket) => {
         wsConnectionsGauge.dec();
     });
 
-    ws.on('error', (error: unknown) => {
-        const err = error as any;
-        console.error('[WS-Server] Client error:', err);
+    ws.on('error', (error: Error) => {
+        console.error('[WS-Server] Client error:', error.message);
         clients.delete(ws);
         wsConnectionsGauge.dec();
     });
@@ -273,6 +301,7 @@ wss.on('connection', (ws: WebSocket) => {
         },
     }));
 });
+
 
 /**
  * Broadcast enriched trade to all connected clients and persist to MongoDB

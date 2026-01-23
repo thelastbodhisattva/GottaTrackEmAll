@@ -2,9 +2,38 @@ import { Trade, WalletProfile } from '../types/index.js';
 import { PolymarketProfileClient } from '../clients/polymarketProfile.js';
 
 /**
- * In-memory wallet profile store (would use MongoDB in production)
+ * Memory-bounded wallet profile store with LRU eviction
+ * Prevents unbounded memory growth in long-running deployments
  */
-const walletStore = new Map<string, WalletProfile>();
+const WALLET_STORE_MAX_SIZE = 5000;
+
+/**
+ * Wallet profile with access tracking for LRU eviction
+ */
+interface TrackedWalletProfile extends WalletProfile {
+    _lastAccessed: number;
+}
+
+const walletStore = new Map<string, TrackedWalletProfile>();
+
+/**
+ * Evict oldest entries when store exceeds max size
+ * Uses LRU (Least Recently Used) strategy based on _lastAccessed timestamp
+ */
+function evictOldestEntries(count: number = 100): void {
+    if (walletStore.size <= WALLET_STORE_MAX_SIZE) return;
+
+    // Get all entries sorted by last accessed time (oldest first)
+    const entries = Array.from(walletStore.entries())
+        .sort((a, b) => a[1]._lastAccessed - b[1]._lastAccessed);
+
+    // Evict the oldest entries
+    for (let i = 0; i < Math.min(count, entries.length); i++) {
+        walletStore.delete(entries[i][0]);
+    }
+
+    console.log(`[WalletProfiler] Evicted ${count} stale entries, ${walletStore.size} remaining`);
+}
 
 /**
  * Wallet profiler that builds and maintains performance metrics
@@ -19,6 +48,23 @@ export class WalletProfiler {
     }
 
     /**
+     * Add a profile to the store with LRU eviction if needed
+     */
+    private setProfile(address: string, profile: WalletProfile): void {
+        const trackedProfile: TrackedWalletProfile = {
+            ...profile,
+            _lastAccessed: Date.now(),
+        };
+
+        // Evict old entries if we're at capacity
+        if (walletStore.size >= WALLET_STORE_MAX_SIZE) {
+            evictOldestEntries(100);
+        }
+
+        walletStore.set(address, trackedProfile);
+    }
+
+    /**
      * Get wallet profile, fetching from Polymarket if not cached
      */
     async getProfile(address: string): Promise<WalletProfile> {
@@ -27,13 +73,15 @@ export class WalletProfiler {
         // Check local cache
         const existing = walletStore.get(normalizedAddr);
         if (existing && existing.totalTrades > 0) {
+            // Update access time for LRU tracking
+            existing._lastAccessed = Date.now();
             return existing;
         }
 
         // Try to fetch from Polymarket API (uses shared client)
         const apiProfile = await this.polymarketClient.getWalletProfile(address);
         if (apiProfile && apiProfile.totalTrades > 0) {
-            walletStore.set(normalizedAddr, apiProfile);
+            this.setProfile(normalizedAddr, apiProfile);
             return apiProfile;
         }
 
@@ -50,12 +98,15 @@ export class WalletProfiler {
                 lastActive: new Date(),
                 tags: [],
             };
-            walletStore.set(normalizedAddr, profile);
+            this.setProfile(normalizedAddr, profile);
             return profile;
         }
 
+        // Update access time for LRU tracking
+        existing._lastAccessed = Date.now();
         return existing;
     }
+
 
     /**
      * Update profile with a new trade
@@ -80,7 +131,7 @@ export class WalletProfiler {
         // Update last active
         profile.lastActive = new Date();
 
-        walletStore.set(address.toLowerCase(), profile);
+        this.setProfile(address.toLowerCase(), profile);
     }
 
     /**
@@ -111,7 +162,7 @@ export class WalletProfiler {
             profile.winRate = estimatedWins / totalResolvedTrades;
         }
 
-        walletStore.set(address.toLowerCase(), profile);
+        this.setProfile(address.toLowerCase(), profile);
     }
 
     /**

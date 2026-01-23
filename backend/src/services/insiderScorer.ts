@@ -129,6 +129,9 @@ export class InsiderScorer {
         }
 
         // Calculate all factors in parallel where possible, passing cached data
+        // Track which factors fail for degraded mode indication
+        const failedFactors: ('diversification' | 'onChain' | 'connection' | 'cluster')[] = [];
+
         const [
             diversificationScore,
             onChainScore,
@@ -140,13 +143,13 @@ export class InsiderScorer {
         ] = await Promise.all([
             // Use extracted factor functions with error handling
             factorDiversification(profileAddress, walletProfile, this.polymarketProfile, trade)
-                .catch(e => { this.recordError('diversification', e); return 0; }),
+                .catch(e => { this.recordError('diversification', e); failedFactors.push('diversification'); return 0; }),
             factorOnChainSource(trade, firstTxTime, this.polygonRpc, this.arkham)
-                .catch(e => { this.recordError('onChain', e); return 0; }),
+                .catch(e => { this.recordError('onChain', e); failedFactors.push('onChain'); return 0; }),
             Promise.resolve(factorTiming(trade, this.preAnnouncementTracker)),
             Promise.resolve(factorImpact(trade)),
             factorConnections(profileAddress, walletProfile, this.threshold, this.clusterDetector)
-                .catch(e => { this.recordError('connection', e); return 0; }),
+                .catch(e => { this.recordError('connection', e); failedFactors.push('connection'); return 0; }),
             Promise.resolve(factorWalletAge(trade, firstTxTime)),
             factorSpecificity(trade, walletProfile, this.polymarketProfile),
         ]);
@@ -165,6 +168,7 @@ export class InsiderScorer {
         } catch (error) {
             console.error('[InsiderScorer] Error in cluster detection:', error);
             this.recordError('cluster', error);
+            failedFactors.push('cluster');
         }
 
         // OrderFlow pattern detection
@@ -208,11 +212,14 @@ export class InsiderScorer {
 
         // DEBUG: Log score breakdown (only in verbose mode)
         if (config.logVerbose) {
-            console.log(`[InsiderScorer] Score breakdown for ${trade.walletAddress?.slice(0, 10) || 'Unknown'}...:`);
+            console.log(`[InsiderScorer] Score breakdown for ${trade.walletAddress?.slice(0, 10) || 'Unknown'}...:${failedFactors.length > 0 ? ' [DEGRADED]' : ''}`);
             console.log(`  walletAge: ${breakdown.walletAge}/25, tradeSize: ${breakdown.tradeSize}/20, timing: ${breakdown.timing}/40`);
             console.log(`  diversification: ${breakdown.diversification}/30, onChain: ${breakdown.onChainSource}/15, specificity: ${breakdown.specificity}/10`);
             console.log(`  impact: ${breakdown.impact}/10, connections: ${breakdown.connections}/20, orderFlow: ${breakdown.orderFlow}/10, cluster: ${breakdown.cluster}/30`);
             console.log(`  => Raw: ${rawTotal}/210, Final: ${breakdown.total}/100`);
+            if (failedFactors.length > 0) {
+                console.log(`  ⚠️ Failed factors: ${failedFactors.join(', ')}`);
+            }
         }
 
         // Low-volume market filter: Require higher score in thin markets to avoid noise
@@ -233,8 +240,10 @@ export class InsiderScorer {
             confidence: this.getConfidenceLevel(breakdown.total),
             ethicsNote: isFlagged ? HansonQuotes.getNoteForScore(breakdown.total) : '',
             calculatedAt: new Date(),
+            degradedFactors: failedFactors.length > 0 ? failedFactors : undefined,
         };
     }
+
 
     /**
      * Count how many connected wallets have been flagged in recent trades

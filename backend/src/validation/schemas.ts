@@ -44,7 +44,18 @@ export const tradesQuerySchema = z.object({
     flaggedOnly: booleanFromString,
     minScore: z.coerce.number().int().min(0).max(100).optional(),
     maxScore: z.coerce.number().int().min(0).max(100).optional(),
-    category: z.enum(['geopolitics', 'war', 'crypto', 'other', 'all']).default('all'),
+    category: z.enum([
+        'geopolitics',
+        'war',
+        'crypto',
+        'sports',
+        'esports',
+        'popculture',
+        'entertainment',
+        'science',
+        'other',
+        'all'
+    ]).default('all'),
     side: z.enum(['YES', 'NO', 'all']).default('all'),
     minSize: z.coerce.number().min(0).optional(),
 });

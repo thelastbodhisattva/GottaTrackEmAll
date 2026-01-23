@@ -3,9 +3,15 @@ import { WalletProfiler } from '../services/walletProfiler.js';
 import { MarketService } from '../services/marketService.js';
 import { HansonQuotes } from '../utils/hansonQuotes.js';
 import { config } from '../config/index.js';
-import { EnrichedTrade } from '../types/index.js';
+import { EnrichedTrade, MarketCategory } from '../types/index.js';
 import { isMongoDBConnected } from '../db/index.js';
 import { validate, tradesQuerySchema, walletParamsSchema } from '../validation/schemas.js';
+
+// Version from package.json (centralized)
+const APP_VERSION = '2.0.0';
+
+// Valid categories for sanitized MongoDB queries
+const VALID_CATEGORIES: readonly string[] = config.targetCategories;
 
 const startTime = Date.now();
 
@@ -27,7 +33,7 @@ export function createRouter(
         res.json({
             status: 'ok',
             timestamp: new Date().toISOString(),
-            version: '2.0.0',
+            version: APP_VERSION,
             uptime: `${Math.floor(uptimeSeconds / 3600)}h ${Math.floor((uptimeSeconds % 3600) / 60)}m`,
             mongodb: isMongoDBConnected() ? 'connected' : 'disconnected',
             memory: {
@@ -99,9 +105,17 @@ export function createRouter(
                 // Dynamic import to avoid circular dependency
                 const { Trade } = await import('../db/models/trade.js');
 
-                const query: any = {};
-                if (category) query.marketCategory = category;
-                if (flaggedOnly) query['insiderScore.isFlagged'] = true;
+                // Build sanitized MongoDB query (prevent NoSQL injection)
+                const query: Record<string, unknown> = {};
+
+                // Validate category against allowed values
+                if (category && VALID_CATEGORIES.includes(category)) {
+                    query.marketCategory = category;
+                }
+
+                if (flaggedOnly) {
+                    query['insiderScore.isFlagged'] = true;
+                }
 
                 const dbTrades = await Trade.find(query)
                     .sort({ timestamp: -1 })
@@ -171,27 +185,21 @@ export function createRouter(
 
     // ==========================================================================
     // Wallet endpoints
+    // IMPORTANT: Static routes MUST come before parameterized routes to avoid conflicts
     // ==========================================================================
 
-    // Get wallet profile
-    router.get('/wallets/:address', validate(walletParamsSchema, 'params'), async (req: Request, res: Response) => {
-        try {
-            const profile = await profiler.getProfile(req.params.address);
-            res.json(profile);
-        } catch (error) {
-            res.status(500).json({ error: 'Failed to fetch wallet profile' });
-        }
-    });
-
-    // Get leaderboard
+    // Get leaderboard (static route - must be before :address)
     router.get('/wallets', async (req: Request, res: Response) => {
         try {
             const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
             const tag = req.query.tag as string;
 
+            // Sanitize tag input
+            const sanitizedTag = tag ? String(tag).replace(/[^a-zA-Z0-9-_]/g, '') : null;
+
             let wallets;
-            if (tag) {
-                wallets = await profiler.getByTag(tag);
+            if (sanitizedTag) {
+                wallets = await profiler.getByTag(sanitizedTag);
             } else {
                 wallets = await profiler.getLeaderboard(limit);
             }
@@ -205,7 +213,7 @@ export function createRouter(
         }
     });
 
-    // Get flagged wallets
+    // Get flagged wallets (static route - must be before :address)
     router.get('/wallets/flagged', async (_req: Request, res: Response) => {
         try {
             const flagged = await profiler.getFlagged();
@@ -218,16 +226,30 @@ export function createRouter(
         }
     });
 
-    // Search wallets
+    // Search wallets (static route with sub-param - must be before :address)
     router.get('/wallets/search/:prefix', async (req: Request, res: Response) => {
         try {
-            const results = await profiler.searchByAddress(req.params.prefix);
+            // Sanitize prefix - only allow hex-like characters
+            const prefix = req.params.prefix;
+            const sanitizedPrefix = prefix.replace(/[^a-fA-F0-9x]/g, '').slice(0, 42);
+
+            const results = await profiler.searchByAddress(sanitizedPrefix);
             res.json({
                 data: results.slice(0, 10),
                 total: results.length,
             });
         } catch (error) {
             res.status(500).json({ error: 'Failed to search wallets' });
+        }
+    });
+
+    // Get wallet profile by address (parameterized route - must be LAST)
+    router.get('/wallets/:address', validate(walletParamsSchema, 'params'), async (req: Request, res: Response) => {
+        try {
+            const profile = await profiler.getProfile(req.params.address);
+            res.json(profile);
+        } catch (error) {
+            res.status(500).json({ error: 'Failed to fetch wallet profile' });
         }
     });
 

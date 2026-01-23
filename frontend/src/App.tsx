@@ -7,6 +7,7 @@ import { StatsGrid } from './components/StatsGrid';
 import { HansonQuoteCard } from './components/HansonQuoteCard';
 import { MetricsPanel } from './components/MetricsPanel';
 import { AdminDashboard } from './components/AdminDashboard';
+import { ErrorBoundary, TradeErrorFallback } from './components/ErrorBoundary';
 import { MarketCategory, ViewMode, EnrichedTrade } from './types';
 
 function App() {
@@ -14,7 +15,11 @@ function App() {
     const isAdminRoute = window.location.pathname === '/admin';
 
     if (isAdminRoute) {
-        return <AdminDashboard />;
+        return (
+            <ErrorBoundary>
+                <AdminDashboard />
+            </ErrorBoundary>
+        );
     }
 
     // WebSocket connection for real-time trades
@@ -36,16 +41,21 @@ function App() {
 
     // Fetch history on mount
     useEffect(() => {
-        setIsLoading(true);
-        fetch('/api/trades?limit=100')
-            .then(res => res.json())
-            .then(data => {
+        const fetchTrades = async () => {
+            setIsLoading(true);
+            try {
+                const res = await fetch('/api/trades?limit=100');
+                const data = await res.json();
                 if (data.data) {
                     setHistoryTrades(data.data);
                 }
-            })
-            .catch(err => console.error('Failed to fetch history:', err))
-            .finally(() => setIsLoading(false));
+            } catch (err) {
+                console.error('Failed to fetch history:', err);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchTrades();
     }, []);
 
     // UI State
@@ -137,21 +147,23 @@ function App() {
                         </h2>
                     </div>
 
-                    {isLoading ? (
-                        <div className="skeleton-container">
-                            {[1, 2, 3, 4, 5].map((i) => (
-                                <div key={i} className="skeleton skeleton-row" />
-                            ))}
-                        </div>
-                    ) : (
-                        <WhaleTape
-                            trades={filteredTrades}
-                            categoryFilter={categoryFilter}
-                            flaggedOnly={flaggedOnly}
-                            bookmarkedWallets={bookmarkedWallets}
-                            onBookmarkToggle={toggleBookmark}
-                        />
-                    )}
+                    <ErrorBoundary fallback={<TradeErrorFallback />}>
+                        {isLoading ? (
+                            <div className="skeleton-container">
+                                {[1, 2, 3, 4, 5].map((i) => (
+                                    <div key={i} className="skeleton skeleton-row" />
+                                ))}
+                            </div>
+                        ) : (
+                            <WhaleTape
+                                trades={filteredTrades}
+                                categoryFilter={categoryFilter}
+                                flaggedOnly={flaggedOnly}
+                                bookmarkedWallets={bookmarkedWallets}
+                                onBookmarkToggle={toggleBookmark}
+                            />
+                        )}
+                    </ErrorBoundary>
                 </div>
 
                 {/* Hanson Quote (shown in Efficiency View) */}
