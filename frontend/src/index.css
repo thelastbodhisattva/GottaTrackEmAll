@@ -1,67 +1,140 @@
 /* ============================================================================
    Polymarket Whale Tracker - Design System
+   Brutalist Terminal Aesthetic - "Whale Hunting Command Center"
    ============================================================================ */
 
-/* CSS Variables / Design Tokens */
+/* Google Fonts - Distinctive Typography (NOT Inter/Roboto/Arial) */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+/* ============================================================================
+   Design Tokens - Light Theme (default)
+   ============================================================================ */
 :root {
-  /* Colors - Dark Theme */
+  /* Colors - Light Theme */
+  --bg-primary: #f8fafc;
+  --bg-secondary: #f1f5f9;
+  --bg-tertiary: #e2e8f0;
+  --bg-card: #ffffff;
+  --bg-hover: #f1f5f9;
+
+  /* Accent Colors - Bold Cyan/Teal palette */
+  --accent-primary: #0891b2;
+  --accent-secondary: #06b6d4;
+  --accent-success: #059669;
+  --accent-warning: #d97706;
+  --accent-danger: #dc2626;
+  --accent-info: #0284c7;
+
+  /* Text Colors */
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+
+  /* Border Colors */
+  --border-color: #e2e8f0;
+  --border-light: #cbd5e1;
+
+  /* Gradients */
+  --gradient-primary: linear-gradient(135deg, #0891b2 0%, #06b6d4 100%);
+  --gradient-success: linear-gradient(135deg, #059669 0%, #10b981 100%);
+  --gradient-danger: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
+  --gradient-glow: radial-gradient(circle at center, rgba(8, 145, 178, 0.06) 0%, transparent 70%);
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.15);
+  --shadow-glow: 0 0 20px rgba(8, 145, 178, 0.15);
+
+  /* Typography - Distinctive fonts (never Inter/Roboto/Arial) */
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Spacing (8-point grid) */
+  --space-1: 0.25rem;
+  /* 4px */
+  --space-2: 0.5rem;
+  /* 8px */
+  --space-3: 0.75rem;
+  /* 12px */
+  --space-4: 1rem;
+  /* 16px */
+  --space-5: 1.25rem;
+  /* 20px */
+  --space-6: 1.5rem;
+  /* 24px */
+  --space-8: 2rem;
+  /* 32px */
+  --space-10: 2.5rem;
+  /* 40px */
+  --space-12: 3rem;
+  /* 48px */
+
+  /* Border Radius */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+
+  /* Easing Functions (from interaction-design skill) */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Decelerate - entering */
+  --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+  /* Accelerate - exiting */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* Both - moving between */
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* Overshoot - playful */
+
+  /* Transitions with proper easing */
+  --transition-fast: 100ms var(--ease-out);
+  --transition-base: 200ms var(--ease-out);
+  --transition-slow: 300ms var(--ease-out);
+  --transition-spring: 300ms var(--spring);
+}
+
+/* ============================================================================
+   Dark Theme (data-theme="dark")
+   ============================================================================ */
+[data-theme="dark"] {
   --bg-primary: #0a0b0d;
   --bg-secondary: #12141a;
   --bg-tertiary: #1a1d24;
   --bg-card: #16181f;
   --bg-hover: #1e2128;
 
-  /* Accent Colors - Minimalist Cyan/Teal palette */
-  --accent-primary: #0ea5e9;
-  --accent-secondary: #38bdf8;
-  --accent-success: #10b981;
-  --accent-warning: #f59e0b;
-  --accent-danger: #ef4444;
-  --accent-info: #06b6d4;
+  --accent-primary: #22d3ee;
+  --accent-secondary: #67e8f9;
+  --accent-success: #34d399;
+  --accent-warning: #fbbf24;
+  --accent-danger: #f87171;
+  --accent-info: #38bdf8;
 
-  /* Text Colors */
   --text-primary: #f8fafc;
   --text-secondary: #94a3b8;
   --text-muted: #64748b;
 
-  /* Border Colors */
   --border-color: #2a2d35;
   --border-light: #3a3d45;
 
-  /* Gradients - Subtle, minimalist */
-  --gradient-primary: linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%);
-  --gradient-success: linear-gradient(135deg, #10b981 0%, #34d399 100%);
-  --gradient-danger: linear-gradient(135deg, #ef4444 0%, #f87171 100%);
-  --gradient-glow: radial-gradient(circle at center, rgba(14, 165, 233, 0.08) 0%, transparent 70%);
+  --gradient-glow: radial-gradient(circle at center, rgba(34, 211, 238, 0.08) 0%, transparent 70%);
+  --shadow-glow: 0 0 20px rgba(34, 211, 238, 0.2);
+}
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 20px rgba(14, 165, 233, 0.2);
+/* ============================================================================
+   Accessibility: Reduced Motion Support
+   ============================================================================ */
+@media (prefers-reduced-motion: reduce) {
 
-  /* Typography */
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
-
-  /* Spacing */
-  --space-1: 0.25rem;
-  --space-2: 0.5rem;
-  --space-3: 0.75rem;
-  --space-4: 1rem;
-  --space-6: 1.5rem;
-  --space-8: 2rem;
-
-  /* Border Radius */
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
-
-  /* Transitions */
-  --transition-fast: 150ms ease;
-  --transition-base: 200ms ease;
-  --transition-slow: 300ms ease;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Reset & Base Styles */
@@ -77,6 +150,7 @@ html {
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
 }
 
 body {
@@ -85,10 +159,30 @@ body {
   color: var(--text-primary);
   line-height: 1.6;
   min-height: 100vh;
-  /* Subtle noise texture for depth */
-  background-image:
-    radial-gradient(ellipse at 20% 0%, rgba(14, 165, 233, 0.04) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 100%, rgba(6, 182, 212, 0.03) 0%, transparent 50%);
+  transition: background-color 0.3s var(--ease-out), color 0.3s var(--ease-out);
+}
+
+/* Heading typography uses display font */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+/* Monospace for data/numbers */
+.mono,
+code,
+pre,
+.stat-card-value,
+.trade-size,
+.wallet-address {
+  font-family: var(--font-mono);
 }
 
 #root {
@@ -722,6 +816,34 @@ body {
 
 .connection-dot.disconnected {
   background: var(--accent-danger);
+}
+
+/* ============================================================================
+   Theme Toggle
+   ============================================================================ */
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.theme-toggle:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-primary);
+  box-shadow: var(--shadow-glow);
+}
+
+.theme-icon {
+  font-size: 1.25rem;
+  line-height: 1;
 }
 
 /* ============================================================================

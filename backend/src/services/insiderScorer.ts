@@ -15,7 +15,7 @@ import { OrderFlowTracker } from './orderFlowTracker.js';
 import { PreAnnouncementTracker } from './preAnnouncementTracker.js';
 import { isMongoDBConnected } from '../db/index.js';
 
-// Import extracted scoring factors for cleaner, testable code
+// Scoring factors - each handles one aspect of insider detection
 import {
     scoreWalletAge as factorWalletAge,
     scoreTradeSize as factorTradeSize,
@@ -25,6 +25,8 @@ import {
     scoreSpecificity as factorSpecificity,
     scoreImpact as factorImpact,
     scoreConnections as factorConnections,
+    scoreTradeVelocity as factorVelocity,
+    scoreEventProximity as factorProximity,
 } from '../scoring/factors/index.js';
 
 /**
@@ -178,9 +180,15 @@ export class InsiderScorer {
             orderFlowScore = Math.min(10, orderFlowResult.score); // Cap at 10 for breakdown
         }
 
+        // Velocity: how fast is this wallet trading? (burst patterns = suspicious)
+        const velocityScore = await factorVelocity(eoaAddress);
+
+        // Proximity: is this trade close to market resolution? (last-minute bets)
+        const proximityScore = factorProximity(trade.marketEndDate || null, trade.timestamp);
+
         const breakdown: ScoreBreakdown = {
             walletAge: walletAgeScore,
-            tradeSize: factorTradeSize(trade), // Use extracted factor
+            tradeSize: factorTradeSize(trade),
             timing: timingScore,
             diversification: diversificationScore,
             onChainSource: onChainScore,
@@ -189,13 +197,15 @@ export class InsiderScorer {
             connections: connectionsScore,
             orderFlow: orderFlowScore,
             cluster: clusterScore,
+            velocity: velocityScore,
+            proximity: proximityScore,
             total: 0,
         };
 
-        // Calculate raw total and normalize to 0-100
-        // Max: walletAge(25) + tradeSize(20) + timing(40) + diversification(30) + 
-        //      onChainSource(15) + specificity(10) + impact(10) + connections(20) + 
-        //      orderFlow(10) + cluster(30) = 210
+        // Sum all factors and normalize to 0-100
+        // Max per factor: walletAge(25) + tradeSize(20) + timing(40) + diversification(30) +
+        //   onChainSource(15) + specificity(10) + impact(10) + connections(20) +
+        //   orderFlow(10) + cluster(30) + velocity(15) + proximity(15) = 240
         const rawTotal =
             breakdown.walletAge +
             breakdown.tradeSize +
@@ -206,9 +216,12 @@ export class InsiderScorer {
             breakdown.impact +
             breakdown.connections +
             breakdown.orderFlow +
-            breakdown.cluster;
+            breakdown.cluster +
+            breakdown.velocity +
+            breakdown.proximity;
 
-        breakdown.total = Math.min(100, Math.round((rawTotal / 210) * 100));
+        const maxRawScore = config.scoring.maxRawScore;
+        breakdown.total = Math.min(100, Math.round((rawTotal / maxRawScore) * 100));
 
         // DEBUG: Log score breakdown (only in verbose mode)
         if (config.logVerbose) {

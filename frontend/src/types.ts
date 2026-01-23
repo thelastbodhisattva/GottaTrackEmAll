@@ -27,8 +27,10 @@ export interface ScoreBreakdown {
     specificity: number;
     impact: number;
     connections: number;
-    orderFlow: number;  // Order flow pattern detection
-    cluster: number;    // Fresh wallet cluster detection
+    orderFlow: number;
+    cluster: number;
+    velocity: number;     // Burst trading detection
+    proximity: number;    // Trade timing near resolution
     total: number;
 }
 

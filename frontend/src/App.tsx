@@ -8,6 +8,7 @@ import { HansonQuoteCard } from './components/HansonQuoteCard';
 import { MetricsPanel } from './components/MetricsPanel';
 import { AdminDashboard } from './components/AdminDashboard';
 import { ErrorBoundary, TradeErrorFallback } from './components/ErrorBoundary';
+import { ThemeToggle } from './components/ThemeToggle';
 import { MarketCategory, ViewMode, EnrichedTrade } from './types';
 
 function App() {
@@ -110,7 +111,8 @@ function App() {
                     <span>Polymarket Whale Tracker</span>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    <ThemeToggle />
                     <EthicsToggle mode={viewMode} onChange={setViewMode} />
 
                     <div className="connection-status">

@@ -82,8 +82,10 @@ export interface ScoreBreakdown {
     impact: number;          // 10 pts max - Post-trade probability shift + low-liquidity whale
     connections: number;     // 15 pts max - Win rate + PnL stability
     orderFlow: number;       // 10 pts max - Accumulation/clustering patterns
-    cluster: number;         // 15 pts max - Fresh wallet cluster detection (NEW)
-    total: number;           // Normalized 0-100 (from max 168)
+    cluster: number;         // 15 pts max - Fresh wallet cluster detection
+    velocity: number;        // 15 pts max - Burst trading (many trades in short window)
+    proximity: number;       // 15 pts max - Trade timing close to event resolution
+    total: number;           // Normalized 0-100
 }
 
 /** Full insider score with metadata */

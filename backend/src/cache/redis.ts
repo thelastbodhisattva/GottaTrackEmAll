@@ -213,3 +213,54 @@ export const CacheTTL = {
     stats: 60,          // 1 minute
     factors: 300,       // 5 minutes
 };
+
+// ============================================================================
+// Trade Velocity Tracking (for insider detection)
+// Uses Redis sorted sets to track trade timestamps per wallet.
+// ============================================================================
+
+import { config } from '../config/index.js';
+
+/**
+ * Record a trade for velocity tracking.
+ * Stores timestamp in a sorted set with automatic cleanup of old entries.
+ */
+export async function recordTradeForVelocity(walletAddress: string): Promise<void> {
+    if (!isRedisEnabled || !redis) return;
+
+    const key = `velocity:${walletAddress.toLowerCase()}`;
+    const now = Date.now();
+    // Convert seconds to ms
+    const windowMs = (config.detection?.velocityWindowSec || 60) * 1000;
+
+    try {
+        // Add current timestamp
+        await redis.zadd(key, now, `${now}`);
+        // Remove entries older than the window
+        await redis.zremrangebyscore(key, 0, now - windowMs);
+        // Set TTL so we don't keep stale keys forever (2x window size)
+        await redis.expire(key, Math.ceil(windowMs / 1000) * 2);
+    } catch (err) {
+        // Non-critical. If Redis hiccups, we just miss this data point.
+    }
+}
+
+/**
+ * Get trade count in the velocity window for a wallet.
+ * Returns 0 if Redis unavailable (fail-open).
+ */
+export async function getTradeVelocity(walletAddress: string): Promise<number> {
+    if (!isRedisEnabled || !redis) return 0;
+
+    const key = `velocity:${walletAddress.toLowerCase()}`;
+    const now = Date.now();
+    // Convert seconds to ms
+    const windowMs = (config.detection?.velocityWindowSec || 60) * 1000;
+
+    try {
+        return await redis.zcount(key, now - windowMs, now);
+    } catch (err) {
+        return 0;
+    }
+}
+

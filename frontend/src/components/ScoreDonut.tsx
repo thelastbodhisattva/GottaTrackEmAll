@@ -7,16 +7,18 @@ interface ScoreDonutProps {
 
 // Colors for each scoring factor
 const FACTOR_COLORS: Record<keyof Omit<ScoreBreakdown, 'total'>, string> = {
-    walletAge: '#ef4444',      // Red - fresh wallet danger
-    tradeSize: '#f97316',      // Orange - size impact
-    timing: '#eab308',         // Yellow - timing
-    diversification: '#22c55e', // Green - concentration
-    onChainSource: '#06b6d4',  // Cyan - on-chain
-    specificity: '#8b5cf6',    // Purple - specificity
-    impact: '#ec4899',         // Pink - market impact
-    connections: '#6366f1',    // Indigo - connections
-    orderFlow: '#14b8a6',      // Teal - order flow
-    cluster: '#f43f5e',        // Rose - wallet cluster
+    walletAge: '#ef4444',      // Red
+    tradeSize: '#f97316',      // Orange
+    timing: '#eab308',         // Yellow
+    diversification: '#22c55e', // Green
+    onChainSource: '#06b6d4',  // Cyan
+    specificity: '#8b5cf6',    // Purple
+    impact: '#ec4899',         // Pink
+    connections: '#6366f1',    // Indigo
+    orderFlow: '#14b8a6',      // Teal
+    cluster: '#f43f5e',        // Rose
+    velocity: '#a855f7',       // Violet
+    proximity: '#0891b2',      // Cyan-dark
 };
 
 const FACTOR_LABELS: Record<keyof Omit<ScoreBreakdown, 'total'>, string> = {
@@ -30,6 +32,8 @@ const FACTOR_LABELS: Record<keyof Omit<ScoreBreakdown, 'total'>, string> = {
     connections: 'Win Rate',
     orderFlow: 'Order Flow',
     cluster: 'Cluster',
+    velocity: 'Velocity',
+    proximity: 'Proximity',
 };
 
 export function ScoreDonut({ score, size = 60 }: ScoreDonutProps) {

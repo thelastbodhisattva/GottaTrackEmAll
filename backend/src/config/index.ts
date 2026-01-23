@@ -44,8 +44,8 @@ export const config = {
     // Scoring Constants (extracted from insiderScorer.ts)
     // ==========================================================================
     scoring: {
-        /** Maximum raw score before normalization (sum of all factor max values) */
-        maxRawScore: 210,
+        /** Max possible raw score before normalization */
+        maxRawScore: 240,
         /** Low volume market daily threshold in USD */
         lowVolumeThreshold: 10000,
         /** Additional score required for low-volume markets */
@@ -90,6 +90,26 @@ export const config = {
         discordMaxRetries: 3,
         /** Base delay for exponential backoff (ms) */
         baseDelayMs: 1000,
+    },
+
+    // ==========================================================================
+    // Detection Improvements
+    // These thresholds tune the insider detection algorithm.
+    // Tweak based on observed false positive/negative rates.
+    // ==========================================================================
+    detection: {
+        /** Wallet age (days) below which a wallet is "fresh" and gets flagged */
+        minWalletAgeDays: parseInt(process.env.MIN_WALLET_AGE_DAYS || '30', 10),
+        /** Min trades in last 7 days for wallet to be "active" (below = dormant) */
+        minRecentTrades: parseInt(process.env.MIN_RECENT_TRADES || '3', 10),
+        /** Max trades per minute before velocity flag triggers */
+        maxTradesPerMin: parseInt(process.env.MAX_TRADES_PER_MIN || '5', 10),
+        /** Window size for velocity tracking (seconds) */
+        velocityWindowSec: parseInt(process.env.VELOCITY_WINDOW_SEC || '60', 10),
+        /** Hours before event resolution to boost insider score */
+        eventProximityHours: parseInt(process.env.EVENT_PROXIMITY_HOURS || '24', 10),
+        /** Points added when trade is within proximity window */
+        eventProximityBonus: parseInt(process.env.EVENT_PROXIMITY_BONUS || '15', 10),
     },
 } as const;
 

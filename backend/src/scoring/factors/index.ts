@@ -10,3 +10,6 @@ export { scoreDiversification, detectCrossMarketCorrelation } from './diversific
 export { scoreOnChainSource } from './onChainFactor.js';
 export { scoreSpecificity } from './specificityFactor.js';
 export { scoreConnections, countFlaggedConnections } from './connectionsFactor.js';
+export { scoreTradeVelocity } from './velocityFactor.js';
+export { scoreEventProximity } from './proximityFactor.js';
+

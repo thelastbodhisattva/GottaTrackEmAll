@@ -12,6 +12,7 @@ import { MarketService } from './marketService.js';
 import { OrderFlowTracker } from './orderFlowTracker.js';
 import { PolygonRpcClient } from '../clients/polygonRpc.js';
 import { tradeCounter, flaggedTradeCounter } from '../middleware/metrics.js';
+import { recordTradeForVelocity } from '../cache/redis.js';
 
 /**
  * Trade processor that filters, enriches, and scores whale trades
@@ -174,6 +175,11 @@ export class TradeProcessor {
      * Enrich trade with market data, wallet profile, and insider score
      */
     private async enrichTrade(trade: Trade): Promise<EnrichedTrade> {
+        // Record this trade for velocity tracking (used by insider scorer)
+        if (trade.walletAddress) {
+            await recordTradeForVelocity(trade.walletAddress);
+        }
+
         // STEP 1: Resolve wallet address if missing
         if (!trade.walletAddress && this.polygonRpc) {
             console.log(`[TradeProcessor] Wallet address missing for trade ${trade.id}, fetching...`);

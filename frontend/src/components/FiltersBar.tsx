@@ -27,9 +27,14 @@ export function FiltersBar({
                     onChange={(e) => onCategoryChange(e.target.value as MarketCategory | 'all')}
                 >
                     <option value="all">All Markets</option>
-                    <option value="geopolitics">🗳️ Geopolitics</option>
+                    <option value="geopolitics">🏛️ Geopolitics</option>
                     <option value="war">⚔️ War</option>
                     <option value="crypto">₿ Crypto</option>
+                    <option value="sports">⚽ Sports</option>
+                    <option value="esports">🎮 Esports</option>
+                    <option value="popculture">🎭 Pop Culture</option>
+                    <option value="entertainment">🎬 Entertainment</option>
+                    <option value="science">🔬 Science</option>
                     <option value="other">📊 Other</option>
                 </select>
             </div>
