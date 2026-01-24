@@ -12,4 +12,4 @@ export { scoreSpecificity } from './specificityFactor.js';
 export { scoreConnections, countFlaggedConnections } from './connectionsFactor.js';
 export { scoreTradeVelocity } from './velocityFactor.js';
 export { scoreEventProximity } from './proximityFactor.js';
-
+export { scoreCorrelatedBets } from './correlatedBetsFactor.js';

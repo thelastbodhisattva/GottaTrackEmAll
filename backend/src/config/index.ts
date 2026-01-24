@@ -44,8 +44,8 @@ export const config = {
     // Scoring Constants (extracted from insiderScorer.ts)
     // ==========================================================================
     scoring: {
-        /** Max possible raw score before normalization */
-        maxRawScore: 240,
+        /** Max possible raw score before normalization (increased for correlatedBets factor) */
+        maxRawScore: 255,
         /** Low volume market daily threshold in USD */
         lowVolumeThreshold: 10000,
         /** Additional score required for low-volume markets */

@@ -19,6 +19,7 @@ const FACTOR_COLORS: Record<keyof Omit<ScoreBreakdown, 'total'>, string> = {
     cluster: '#f43f5e',        // Rose
     velocity: '#a855f7',       // Violet
     proximity: '#0891b2',      // Cyan-dark
+    correlatedBets: '#8b5cf6', // Purple (cross-market)
 };
 
 const FACTOR_LABELS: Record<keyof Omit<ScoreBreakdown, 'total'>, string> = {
@@ -34,6 +35,7 @@ const FACTOR_LABELS: Record<keyof Omit<ScoreBreakdown, 'total'>, string> = {
     cluster: 'Cluster',
     velocity: 'Velocity',
     proximity: 'Proximity',
+    correlatedBets: 'Correlated',
 };
 
 export function ScoreDonut({ score, size = 60 }: ScoreDonutProps) {

@@ -1,130 +1,118 @@
-# Polymarket Whale & Insider Tracker 🐋🕵️‍♂️
+# Polymarket Whale & Insider Tracker
 
-A powerful, real-time analytics platform designed to monitor **Polymarket** for high-value trades ("whales") and detect potential insider activity using advanced scoring algorithms. This project combines a high-performance backend ingestion engine with a reactive frontend dashboard.
+Real-time monitoring for Polymarket. Catches whale trades, scores them for insider-like behavior, and sends Discord alerts when something looks suspicious. The scoring algorithm has 11 factors now. It's not perfect, but hey at least it's working as intended.
 
-## 🚀 Key Features
+## What it does
 
-*   **Real-time Whale Monitoring**: Subscribes to Polymarket's CLOB (Central Limit Order Book) WebSocket to detect trades exceeding configurable USD thresholds instantly.
-*   **Insider Trading Detection**: utilizing a sophisticated scoring engine that analyzes:
-    *   **Timing Factors**: Trades made shortly before market resolution or major news events.
-    *   **Trade Patterns**: Behavioral analysis of wallet history and position sizing.
-    *   **Wallet Profiling**: Integration with on-chain data (Polygonscan, Alchemy) to enrich wallet identities.
-*   **Interactive Admin Dashboard**: A React-based frontend visualization to monitor live events, review flagged trades, and analyze historical data.
-*   **Discord Alerts**: Configurable webhook integration to push real-time notifications to your community or trading group.
-*   **Robust Data Pipeline**: Built with MongoDB for persistent storage and Redis for high-speed caching and queue management.
+- **Watches the WebSocket feed** from Polymarket's CLOB and filters for trades above a threshold (default $15k)
+- **Scores each trade** using wallet age, trade timing, position sizing, cluster behavior, order flow patterns, and cross-market correlation
+- **Alerts to Discord** when scores exceed your threshold, with links to the market, trader profile, and Polygonscan
+- **Tracks resolved outcomes** so you can see which flagged traders were actually right
 
-## 🛠️ Technology Stack
+The frontend has three tabs: a live trade feed (the "Whale Tape"), a leaderboard showing wallet performance after markets resolve, and watchlist management for tracking specific addresses.
 
-### Backend
-*   **Runtime**: Node.js (v18+) & TypeScript
-*   **Framework**: Express.js
-*   **Database**: MongoDB (via Mongoose)
-*   **Caching**: Redis (via ioredis)
-*   **Communication**: WebSocket (`ws`) for real-time market data
-*   **Alerting**: Discord.js / Webhooks
-*   **Blockchain**: Ethers.js for EVM interactions
+## The 11-factor scoring algorithm
 
-### Frontend
-*   **Framework**: React (Vite)
-*   **Visualization**: Chart.js / react-chartjs-2
-*   **Language**: TypeScript
+Each factor adds points. Total max is 255, normalized to 0-100 for display.
 
-### DevOps & Infrastructure
-*   **Containerization**: Docker & Docker Compose
-*   **Testing**: Vitest & Jest
-*   **Linting**: ESLint
+| Factor | Max pts | What it checks |
+|--------|---------|----------------|
+| Wallet Age | 25 | Newer wallets score higher |
+| Trade Size | 25 | Larger positions relative to wallet history |
+| Timing | 25 | Trades near market creation or big news |
+| Diversification | 25 | Concentrated bets on few markets |
+| On-chain Source | 20 | Funded from CEX vs. contract vs. unknown |
+| Specificity | 20 | Obscure markets vs. popular ones |
+| Impact | 20 | Did the trade move the price? |
+| Connections | 30 | Win rate from historical trades |
+| Order Flow | 20 | Unusual patterns like whale exits |
+| Cluster | 30 | Multiple wallets trading in sync |
+| Correlated Bets | 15 | Consistent positions across related markets |
 
-## 📋 Prerequisites
+The last one is new in v2.1. If someone bets YES on "Trump wins" and NO on "Biden wins", that's logically consistent and gets points. If they bet YES on both in the same race, that's hedging, fewer points.
 
-*   [Docker](https://www.docker.com/products/docker-desktop) & Docker Compose (Recommended)
-*   [Node.js](https://nodejs.org/) v18+ (If running locally without Docker)
-*   Polymarket API Access (Public WebSocket)
-*   Alchemy / Polygonscan API Keys (Recommended for full wallet resolution)
+## Stack
 
-## ⚡ Quick Start (Docker)
+**Backend**: Node.js, TypeScript, Express, MongoDB, Redis, WebSocket  
+**Frontend**: React (Vite), TypeScript  
+**Infra**: Docker Compose for the full stack
 
-The easiest way to get the entire stack (Database, Cache, Backend, Frontend) running is using Docker Compose.
+## Getting started
 
-1.  **Clone the repository**
-    ```bash
-    git clone <repository-url>
-    cd GottaTrackEmAll
-    ```
-
-2.  **Configure Environment Variables**
-    Create a `.env` file in the `backend` directory (or use the environment variables in `docker-compose.yml`):
-    ```bash
-    cp backend/.env.example backend/.env # If example exists, otherwise create new
-    ```
-    *See the [Configuration](#-configuration) section below for details.*
-
-3.  **Start Services**
-    ```bash
-    docker-compose up -d --build
-    ```
-
-4.  **Access the Application**
-    *   **Frontend**: [http://localhost:3000](http://localhost:3000)
-    *   **Backend API**: [http://localhost:3001](http://localhost:3001)
-    *   **Redis**: [localhost:6379](localhost:6379)
-    *   **MongoDB**: [localhost:27017](localhost:27017)
-
-## 🔧 Configuration
-
-Configure the application by setting the following environment variables. These can be set in `docker-compose.yml` or a `.env` file.
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | Backend API Port | `3001` |
-| `MONGODB_URI` | MongoDB Connection String | `mongodb://localhost:27017/whale-tracker` |
-| `REDIS_URL` | Redis Connection String | `redis://localhost:6379` |
-| `POLYMARKET_WS_URL` | Polymarket WebSocket Endpoint | `wss://ws-subscriptions-clob.polymarket.com/ws/market` |
-| `WHALE_THRESHOLD_USD` | Minimum trade size ($) to flag as a whale | `1000` |
-| `INSIDER_SCORE_THRESHOLD` | Scoring threshold (0-100) to flag as insider | `65` |
-| `ALCHEMY_API_KEY` | API Key for Alchemy (Polygon RPC) | *Required for wallet resolution* |
-| `POLYGONSCAN_API_KEY` | API Key for Polygonscan | *Optional* |
-| `DISCORD_WEBHOOK_URL` | Webhook URL for Discord alerts | *Optional* |
-| `LOG_VERBOSE` | Enable verbose logging | `false` |
-
-## 💻 Local Development
-
-If you prefer to run services individually:
-
-### Backend
-
-1.  Navigate to `backend`:
-    ```bash
-    cd backend
-    npm install
-    ```
-2.  Start dependencies (Mongo/Redis) locally or via Docker.
-3.  Run in development mode:
-    ```bash
-    npm run dev
-    ```
-
-### Frontend
-
-1.  Navigate to `frontend`:
-    ```bash
-    cd frontend
-    npm install
-    ```
-2.  Run the development server:
-    ```bash
-    npm run dev
-    ```
-
-## 🧪 Testing
-
-Run strict unit and integration tests to ensure system reliability.
+### Docker (recommended)
 
 ```bash
-# Backend Tests
-cd backend
-npm run test
+git clone <repo-url>
+cd GottaTrackEmAll
+
+# Copy env template and fill in your keys
+cp backend/.env.example backend/.env
+
+# Fire it up
+docker-compose up -d --build
 ```
 
-## 📄 License
+Frontend at http://localhost:3000, API at http://localhost:3001.
 
-This project is licensed under the MIT License.
+### Local dev
+
+```bash
+# Backend
+cd backend
+npm install
+npm run dev
+
+# Frontend (separate terminal)
+cd frontend
+npm install
+npm run dev
+```
+
+You'll need MongoDB and Redis running locally, or point to remote instances via env vars.
+
+## Environment variables
+
+| Variable | What | Default |
+|----------|------|---------|
+| `PORT` | Backend port | 3001 |
+| `MONGODB_URI` | Mongo connection string | mongodb://localhost:27017/whale-tracker |
+| `REDIS_URL` | Redis connection string | redis://localhost:6379 |
+| `WHALE_THRESHOLD_USD` | Min trade size to track | 1000 |
+| `INSIDER_SCORE_THRESHOLD` | Score threshold for alerts | 65 |
+| `ALCHEMY_API_KEY` | For wallet resolution | Required |
+| `POLYGONSCAN_API_KEY` | Wallet age lookups | Optional |
+| `DISCORD_WEBHOOK_URL` | Alert destination | Optional |
+
+## New in v2.1
+
+- **Watchlists**: Create lists of wallets to track with custom alert thresholds
+- **Leaderboard**: See which wallets are profitable after markets resolve
+- **Correlation detection**: Score boost for wallets with logically consistent positions across related markets
+- **WebSocket admin panel**: Monitor connection health and manually refresh subscriptions
+- **Tabbed dashboard**: Switch between Whale Tape, Leaderboard, and Watchlists
+
+## API endpoints
+
+### Core
+- `GET /api/trades` - Recent trades with filtering
+- `GET /api/wallets/:address` - Wallet profile and history
+- `GET /api/markets/:id` - Market details
+
+### Watchlists
+- `GET /api/watchlists` - List all watchlists
+- `POST /api/watchlists` - Create new watchlist
+- `PUT /api/watchlists/:id` - Update watchlist
+- `DELETE /api/watchlists/:id` - Delete watchlist
+
+### Leaderboard
+- `GET /api/metrics/leaderboard` - Top wallets by ROI
+- `GET /api/metrics/leaderboard/:wallet` - Stats for specific wallet
+
+### Admin
+- `GET /api/admin/stats` - System stats
+- `GET /api/admin/subscriptions/health` - WebSocket connection status
+- `POST /api/admin/subscriptions/refresh` - Force reconnect
+
+## License
+
+MIT

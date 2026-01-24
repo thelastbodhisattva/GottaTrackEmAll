@@ -87,6 +87,7 @@ export interface ScoreBreakdown {
     cluster: number;         // 15 pts max - Fresh wallet cluster detection
     velocity: number;        // 15 pts max - Burst trading (many trades in short window)
     proximity: number;       // 15 pts max - Trade timing close to event resolution
+    correlatedBets: number;  // 15 pts max - Cross-market correlation detection
     total: number;           // Normalized 0-100
 }
 
@@ -237,4 +238,22 @@ export interface WsSubscribeMessage {
 export interface WsTradeEvent {
     event_type: 'trade';
     data: RawTrade;
+}
+
+// ============================================================================
+// Leaderboard Types
+// ============================================================================
+
+/** Entry in the PnL leaderboard */
+export interface LeaderboardEntry {
+    walletAddress: string;
+    totalTrades: number;
+    wins: number;
+    losses: number;
+    winRate: number;           // wins / (wins + losses) * 100
+    totalPnl: number;          // Cumulative PnL in USD
+    roi: number;               // ROI percentage
+    avgTradeSize: number;
+    lastTradeDate: Date;
+    rank?: number;
 }

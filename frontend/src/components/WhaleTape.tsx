@@ -22,6 +22,9 @@ const FACTOR_LABELS: Record<string, string> = {
     connections: 'Win Rate',
     orderFlow: 'Order Flow',
     cluster: 'Cluster',
+    velocity: 'Velocity',
+    proximity: 'Proximity',
+    correlatedBets: 'Correlated',
 };
 
 // Category icons for visual differentiation
@@ -215,7 +218,18 @@ export function WhaleTape({
                                         </a>
                                     </td>
                                     <td>
-                                        <ScoreDonut score={trade.insiderScore} size={44} />
+                                        <div className="score-cell-wrapper">
+                                            <ScoreDonut score={trade.insiderScore} size={44} />
+                                            {trade.insiderScore.breakdown.correlatedBets > 0 && (
+                                                <span
+                                                    className="correlation-badge correlation-tooltip"
+                                                    data-tooltip="Cross-market correlation detected"
+                                                >
+                                                    <span className="correlation-badge__icon">🔗</span>
+                                                    Linked
+                                                </span>
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
                                 {/* Expanded row showing score breakdown */}

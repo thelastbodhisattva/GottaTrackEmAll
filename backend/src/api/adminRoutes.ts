@@ -2,14 +2,16 @@ import { Router, Request, Response } from 'express';
 import { Trade, Wallet, isMongoDBConnected } from '../db/index.js';
 import { EnrichedTrade } from '../types/index.js';
 import { InsiderScorer } from '../services/insiderScorer.js';
+import { PolymarketWebSocket } from '../services/websocket.js';
 
 /**
  * Admin Dashboard API Routes
- * Provides monitoring and management endpoints
+ * Provides monitoring, management, and WebSocket subscription endpoints
  */
 export function createAdminRouter(
     tradeHistory: Map<string, EnrichedTrade>,
-    insiderScorer?: InsiderScorer
+    insiderScorer?: InsiderScorer,
+    polymarketWs?: PolymarketWebSocket
 ): Router {
     const router = Router();
 
@@ -328,6 +330,101 @@ export function createAdminRouter(
         } catch (error) {
             console.error('[AdminRoutes] Error fetching factor breakdown:', error);
             res.status(500).json({ error: 'Failed to fetch factor breakdown' });
+        }
+    });
+
+    // =============================================================================
+    // WebSocket Subscription Management
+    // =============================================================================
+
+    /**
+     * GET /api/admin/subscriptions
+     * Get current WebSocket subscription status
+     */
+    router.get('/subscriptions', (_req: Request, res: Response) => {
+        try {
+            if (!polymarketWs) {
+                res.json({
+                    status: 'unavailable',
+                    message: 'WebSocket service not injected',
+                });
+                return;
+            }
+
+            const subscribedAssets = polymarketWs.getSubscribedAssets();
+            const isConnected = polymarketWs.isConnected();
+
+            res.json({
+                status: isConnected ? 'connected' : 'disconnected',
+                totalSubscriptions: subscribedAssets.length,
+                assets: subscribedAssets.slice(0, 100), // Limit response size
+                hasMore: subscribedAssets.length > 100,
+            });
+        } catch (error) {
+            console.error('[AdminRoutes] Error fetching subscriptions:', error);
+            res.status(500).json({ error: 'Failed to fetch subscriptions' });
+        }
+    });
+
+    /**
+     * GET /api/admin/subscriptions/health
+     * Get WebSocket connection health stats
+     */
+    router.get('/subscriptions/health', (_req: Request, res: Response) => {
+        try {
+            if (!polymarketWs) {
+                res.json({
+                    status: 'unavailable',
+                    message: 'WebSocket service not injected',
+                });
+                return;
+            }
+
+            const subscribedAssets = polymarketWs.getSubscribedAssets();
+            const isConnected = polymarketWs.isConnected();
+
+            res.json({
+                status: isConnected ? 'healthy' : 'unhealthy',
+                connected: isConnected,
+                totalSubscriptions: subscribedAssets.length,
+                memoryUsage: process.memoryUsage().heapUsed / 1024 / 1024,
+                uptime: process.uptime(),
+                timestamp: new Date().toISOString(),
+            });
+        } catch (error) {
+            console.error('[AdminRoutes] Error fetching health:', error);
+            res.status(500).json({ error: 'Failed to fetch health' });
+        }
+    });
+
+    /**
+     * POST /api/admin/subscriptions/refresh
+     * Force refresh subscriptions with latest active markets
+     */
+    router.post('/subscriptions/refresh', async (req: Request, res: Response) => {
+        try {
+            if (!polymarketWs) {
+                res.status(503).json({ error: 'WebSocket service not available' });
+                return;
+            }
+
+            const activeAssetIds: string[] = req.body.assetIds;
+            if (!activeAssetIds || !Array.isArray(activeAssetIds)) {
+                res.status(400).json({ error: 'assetIds array is required in body' });
+                return;
+            }
+
+            console.log(`[AdminRoutes] Manual subscription refresh with ${activeAssetIds.length} markets`);
+            await polymarketWs.refreshSubscriptions(activeAssetIds);
+
+            res.json({
+                success: true,
+                message: 'Subscriptions refreshed',
+                newCount: polymarketWs.getSubscribedAssets().length,
+            });
+        } catch (error) {
+            console.error('[AdminRoutes] Error refreshing subscriptions:', error);
+            res.status(500).json({ error: 'Failed to refresh subscriptions' });
         }
     });
 

@@ -9,7 +9,11 @@ import { MetricsPanel } from './components/MetricsPanel';
 import { AdminDashboard } from './components/AdminDashboard';
 import { ErrorBoundary, TradeErrorFallback } from './components/ErrorBoundary';
 import { ThemeToggle } from './components/ThemeToggle';
+import { PnLLeaderboard } from './components/PnLLeaderboard';
+import { WatchlistManager } from './components/WatchlistManager';
 import { MarketCategory, ViewMode, EnrichedTrade } from './types';
+
+type TabView = 'trades' | 'leaderboard' | 'watchlists';
 
 function App() {
     // Check if on admin route
@@ -64,6 +68,7 @@ function App() {
     const [categoryFilter, setCategoryFilter] = useState<MarketCategory | 'all'>('all');
     const [flaggedOnly, setFlaggedOnly] = useState(false);
     const [minSize, setMinSize] = useState(1000);
+    const [activeTab, setActiveTab] = useState<TabView>('trades');
 
     // Bookmarked wallets (persisted in localStorage)
     const [bookmarkedWallets, setBookmarkedWallets] = useState<Set<string>>(() => {
@@ -130,43 +135,81 @@ function App() {
                 {/* Algorithm Validation Metrics */}
                 <MetricsPanel />
 
-                {/* Filters */}
-                <FiltersBar
-                    category={categoryFilter}
-                    onCategoryChange={setCategoryFilter}
-                    flaggedOnly={flaggedOnly}
-                    onFlaggedOnlyChange={setFlaggedOnly}
-                    minSize={minSize}
-                    onMinSizeChange={setMinSize}
-                />
-
-                {/* Whale Tape Card */}
-                <div className="card">
-                    <div className="card-header">
-                        <h2 className="card-title">
-                            🐋 Whale Tape
-                            {flaggedOnly && <span style={{ marginLeft: '0.5rem', fontSize: '0.875rem', color: 'var(--accent-danger)' }}>🚨 Signals Only</span>}
-                        </h2>
-                    </div>
-
-                    <ErrorBoundary fallback={<TradeErrorFallback />}>
-                        {isLoading ? (
-                            <div className="skeleton-container">
-                                {[1, 2, 3, 4, 5].map((i) => (
-                                    <div key={i} className="skeleton skeleton-row" />
-                                ))}
-                            </div>
-                        ) : (
-                            <WhaleTape
-                                trades={filteredTrades}
-                                categoryFilter={categoryFilter}
-                                flaggedOnly={flaggedOnly}
-                                bookmarkedWallets={bookmarkedWallets}
-                                onBookmarkToggle={toggleBookmark}
-                            />
-                        )}
-                    </ErrorBoundary>
+                {/* Tab Navigation */}
+                <div className="tab-navigation">
+                    <button
+                        className={`tab-btn ${activeTab === 'trades' ? 'tab-btn--active' : ''}`}
+                        onClick={() => setActiveTab('trades')}
+                    >
+                        <span className="tab-icon">🐋</span>
+                        Whale Tape
+                    </button>
+                    <button
+                        className={`tab-btn ${activeTab === 'leaderboard' ? 'tab-btn--active' : ''}`}
+                        onClick={() => setActiveTab('leaderboard')}
+                    >
+                        <span className="tab-icon">🏆</span>
+                        Leaderboard
+                    </button>
+                    <button
+                        className={`tab-btn ${activeTab === 'watchlists' ? 'tab-btn--active' : ''}`}
+                        onClick={() => setActiveTab('watchlists')}
+                    >
+                        <span className="tab-icon">👁️</span>
+                        Watchlists
+                    </button>
                 </div>
+
+                {/* Tab Content */}
+                {activeTab === 'trades' && (
+                    <>
+                        {/* Filters */}
+                        <FiltersBar
+                            category={categoryFilter}
+                            onCategoryChange={setCategoryFilter}
+                            flaggedOnly={flaggedOnly}
+                            onFlaggedOnlyChange={setFlaggedOnly}
+                            minSize={minSize}
+                            onMinSizeChange={setMinSize}
+                        />
+
+                        {/* Whale Tape Card */}
+                        <div className="card">
+                            <div className="card-header">
+                                <h2 className="card-title">
+                                    🐋 Whale Tape
+                                    {flaggedOnly && <span style={{ marginLeft: '0.5rem', fontSize: '0.875rem', color: 'var(--accent-danger)' }}>🚨 Signals Only</span>}
+                                </h2>
+                            </div>
+
+                            <ErrorBoundary fallback={<TradeErrorFallback />}>
+                                {isLoading ? (
+                                    <div className="skeleton-container">
+                                        {[1, 2, 3, 4, 5].map((i) => (
+                                            <div key={i} className="skeleton skeleton-row" />
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <WhaleTape
+                                        trades={filteredTrades}
+                                        categoryFilter={categoryFilter}
+                                        flaggedOnly={flaggedOnly}
+                                        bookmarkedWallets={bookmarkedWallets}
+                                        onBookmarkToggle={toggleBookmark}
+                                    />
+                                )}
+                            </ErrorBoundary>
+                        </div>
+                    </>
+                )}
+
+                {activeTab === 'leaderboard' && (
+                    <PnLLeaderboard limit={25} />
+                )}
+
+                {activeTab === 'watchlists' && (
+                    <WatchlistManager />
+                )}
 
                 {/* Hanson Quote (shown in Efficiency View) */}
                 {showEthics && <HansonQuoteCard />}

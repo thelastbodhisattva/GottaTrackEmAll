@@ -24,6 +24,7 @@ import { PersistenceService } from './services/persistenceService.js';
 import { OutcomeTracker } from './services/outcomeTracker.js';
 import { ClusterDetector } from './services/clusterDetector.js';
 import { createMetricsRouter } from './api/metricsRoutes.js';
+import { WatchlistService } from './services/watchlistService.js';
 
 // =============================================================================
 // Initialize Services
@@ -66,13 +67,21 @@ const clusterDetector = new ClusterDetector();
 import { PreAnnouncementTracker } from './services/preAnnouncementTracker.js';
 const preAnnouncementTracker = new PreAnnouncementTracker();
 
-// Core services
-const insiderScorer = new InsiderScorer(polygonRpc, polymarketProfile, arkham, clusterDetector, orderFlowTracker, preAnnouncementTracker);
-const walletProfiler = new WalletProfiler(polymarketProfile);
+// Cross-market correlation detection
+import { CorrelationDetector } from './services/correlationDetector.js';
+
+// Core services (CorrelationDetector requires marketService, so create it first)
 const marketService = new MarketService();
+const correlationDetector = new CorrelationDetector(marketService);
+const insiderScorer = new InsiderScorer(polygonRpc, polymarketProfile, arkham, clusterDetector, orderFlowTracker, preAnnouncementTracker, correlationDetector);
+const walletProfiler = new WalletProfiler(polymarketProfile);
 const tradeProcessor = new TradeProcessor(insiderScorer, walletProfiler, marketService, orderFlowTracker, polygonRpc);
 const alertService = new AlertService();
 const marketFetcher = new MarketFetcher();
+const watchlistService = new WatchlistService();
+
+// WebSocket client for Polymarket trades (must be declared before admin routes)
+const polymarketWs = new PolymarketWebSocket();
 
 // Send test alert on startup
 alertService.sendTestMessage().catch(console.error);
@@ -157,6 +166,7 @@ const tradeHistory = new Map<string, EnrichedTrade>();
 // =============================================================================
 
 import { createAdminRouter } from './api/adminRoutes.js';
+import { watchlistRouter } from './api/watchlistRoutes.js';
 import { apiLimiter, adminLimiter, tradeLimiter, metricsMiddleware, getMetrics, getMetricsContentType, validateWsToken, wsConnectionsGauge } from './middleware/index.js';
 import { initRedis, isRedisConnected } from './cache/redis.js';
 import { isMongoDBConnected } from './db/index.js';
@@ -190,7 +200,8 @@ app.use(`/api/${API_VERSION}/metrics`, metricsRouter);
 // Backwards compatibility: also mount at /api (deprecation warning in future)
 app.use('/api', router);
 app.use('/api/metrics', metricsRouter);
-app.use('/api/admin', createAdminRouter(tradeHistory, insiderScorer));
+app.use('/api/watchlists', watchlistRouter);
+app.use('/api/admin', createAdminRouter(tradeHistory, insiderScorer, polymarketWs));
 
 // Health check endpoint
 app.get('/health', (_req, res) => {
@@ -347,10 +358,8 @@ function broadcastTrade(trade: EnrichedTrade): void {
 }
 
 // =============================================================================
-// Polymarket WebSocket Connection
+// Polymarket WebSocket Event Handlers
 // =============================================================================
-
-const polymarketWs = new PolymarketWebSocket();
 
 // Handle incoming trades
 polymarketWs.on('trade', async (rawTrade: RawTrade) => {
@@ -380,6 +389,29 @@ polymarketWs.on('trade', async (rawTrade: RawTrade) => {
             // Send Discord alert if configured
             if (alertService.shouldAlert(enrichedTrade)) {
                 await alertService.sendWhaleAlert(enrichedTrade);
+            }
+
+            // Check watchlists and send custom alerts
+            try {
+                const walletToCheck = enrichedTrade.walletAddress || enrichedTrade.proxyWalletAddress;
+                if (walletToCheck) {
+                    const matchingWatchlists = await watchlistService.findWatchlistsForWallet(walletToCheck);
+                    for (const watchlist of matchingWatchlists) {
+                        // Check if trade meets watchlist threshold
+                        if (enrichedTrade.sizeUsd >= watchlist.alertConfig.minTradeSize) {
+                            // Check category filter if specified
+                            const categories = watchlist.alertConfig.categories;
+                            if (categories.length === 0 || categories.includes(enrichedTrade.marketCategory)) {
+                                // Check score filter if specified
+                                if (enrichedTrade.insiderScore.breakdown.total >= watchlist.alertConfig.minScore) {
+                                    await alertService.sendWatchlistAlert(enrichedTrade, watchlist);
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (watchlistError) {
+                console.error('[Main] Error checking watchlists:', watchlistError);
             }
 
             // Track flagged trades for pre-announcement timing detection

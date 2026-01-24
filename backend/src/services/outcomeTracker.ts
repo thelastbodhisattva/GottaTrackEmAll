@@ -1,4 +1,5 @@
 import { Trade, Market, Metrics, Wallet, isMongoDBConnected } from '../db/index.js';
+import { LeaderboardEntry } from '../types/index.js';
 
 /**
  * OutcomeTracker - Polls Polymarket API for resolved markets and calculates win rate validation
@@ -514,5 +515,169 @@ export class OutcomeTracker {
             },
             statisticalSignificance,
         };
+    }
+
+    /**
+     * Get PnL leaderboard - top performing wallets by ROI
+     * Aggregates completed trades to calculate PnL and win rates
+     */
+    async getLeaderboard(limit: number = 20): Promise<LeaderboardEntry[]> {
+        if (!isMongoDBConnected()) {
+            return [];
+        }
+
+        try {
+            const leaderboard = await Trade.aggregate([
+                // Only count resolved trades
+                { $match: { resolved: true } },
+                // Group by wallet
+                {
+                    $group: {
+                        _id: '$walletAddress',
+                        totalTrades: { $sum: 1 },
+                        wins: {
+                            $sum: { $cond: ['$won', 1, 0] }
+                        },
+                        losses: {
+                            $sum: { $cond: [{ $eq: ['$won', false] }, 1, 0] }
+                        },
+                        totalPnl: {
+                            $sum: {
+                                $cond: [
+                                    '$won',
+                                    { $subtract: ['$payout', '$cost'] }, // Profit
+                                    { $multiply: ['$cost', -1] }            // Loss (cost as negative)
+                                ]
+                            }
+                        },
+                        totalCost: { $sum: '$cost' },
+                        avgTradeSize: { $avg: '$sizeUsd' },
+                        lastTradeDate: { $max: '$timestamp' },
+                    }
+                },
+                // Filter out wallets with no address
+                { $match: { _id: { $nin: [null, ''] } } },
+                // Calculate derived fields
+                {
+                    $addFields: {
+                        winRate: {
+                            $cond: [
+                                { $gt: [{ $add: ['$wins', '$losses'] }, 0] },
+                                { $multiply: [{ $divide: ['$wins', { $add: ['$wins', '$losses'] }] }, 100] },
+                                0
+                            ]
+                        },
+                        roi: {
+                            $cond: [
+                                { $gt: ['$totalCost', 0] },
+                                { $multiply: [{ $divide: ['$totalPnl', '$totalCost'] }, 100] },
+                                0
+                            ]
+                        }
+                    }
+                },
+                // Sort by ROI descending
+                { $sort: { roi: -1 } },
+                // Limit results
+                { $limit: limit },
+                // Project final shape
+                {
+                    $project: {
+                        _id: 0,
+                        walletAddress: '$_id',
+                        totalTrades: 1,
+                        wins: 1,
+                        losses: 1,
+                        winRate: { $round: ['$winRate', 1] },
+                        totalPnl: { $round: ['$totalPnl', 2] },
+                        roi: { $round: ['$roi', 1] },
+                        avgTradeSize: { $round: ['$avgTradeSize', 2] },
+                        lastTradeDate: 1,
+                    }
+                }
+            ]);
+
+            // Add rank
+            return leaderboard.map((entry, index) => ({
+                ...entry,
+                rank: index + 1,
+            }));
+        } catch (error) {
+            console.error('[OutcomeTracker] Error generating leaderboard:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Get stats for a specific wallet
+     */
+    async getWalletStats(walletAddress: string): Promise<LeaderboardEntry | null> {
+        if (!isMongoDBConnected()) {
+            return null;
+        }
+
+        try {
+            const normalized = walletAddress.toLowerCase();
+            const results = await Trade.aggregate([
+                { $match: { walletAddress: normalized, resolved: true } },
+                {
+                    $group: {
+                        _id: '$walletAddress',
+                        totalTrades: { $sum: 1 },
+                        wins: { $sum: { $cond: ['$won', 1, 0] } },
+                        losses: { $sum: { $cond: [{ $eq: ['$won', false] }, 1, 0] } },
+                        totalPnl: {
+                            $sum: {
+                                $cond: [
+                                    '$won',
+                                    { $subtract: ['$payout', '$cost'] },
+                                    { $multiply: ['$cost', -1] }
+                                ]
+                            }
+                        },
+                        totalCost: { $sum: '$cost' },
+                        avgTradeSize: { $avg: '$sizeUsd' },
+                        lastTradeDate: { $max: '$timestamp' },
+                    }
+                },
+                {
+                    $addFields: {
+                        winRate: {
+                            $cond: [
+                                { $gt: [{ $add: ['$wins', '$losses'] }, 0] },
+                                { $multiply: [{ $divide: ['$wins', { $add: ['$wins', '$losses'] }] }, 100] },
+                                0
+                            ]
+                        },
+                        roi: {
+                            $cond: [
+                                { $gt: ['$totalCost', 0] },
+                                { $multiply: [{ $divide: ['$totalPnl', '$totalCost'] }, 100] },
+                                0
+                            ]
+                        }
+                    }
+                },
+                {
+                    $project: {
+                        _id: 0,
+                        walletAddress: '$_id',
+                        totalTrades: 1,
+                        wins: 1,
+                        losses: 1,
+                        winRate: { $round: ['$winRate', 1] },
+                        totalPnl: { $round: ['$totalPnl', 2] },
+                        roi: { $round: ['$roi', 1] },
+                        avgTradeSize: { $round: ['$avgTradeSize', 2] },
+                        lastTradeDate: 1,
+                    }
+                }
+            ]);
+
+            return results[0] || null;
+        } catch (error) {
+            console.error('[OutcomeTracker] Error getting wallet stats:', error);
+            return null;
+        }
     }
 }

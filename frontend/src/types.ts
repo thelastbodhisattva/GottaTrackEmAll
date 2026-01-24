@@ -31,6 +31,7 @@ export interface ScoreBreakdown {
     cluster: number;
     velocity: number;     // Burst trading detection
     proximity: number;    // Trade timing near resolution
+    correlatedBets: number; // Cross-market correlation detection
     total: number;
 }
 
@@ -102,3 +103,54 @@ export interface AppStats {
     trackedWallets: number;
     uptime: number;
 }
+
+// ============================================================================
+// Watchlist Types
+// ============================================================================
+
+export interface AlertConfig {
+    minTradeSize: number;
+    minScore: number;
+    categories: MarketCategory[];
+    channels: string[];
+}
+
+export interface Watchlist {
+    _id: string;
+    name: string;
+    wallets: string[];
+    alertConfig: AlertConfig;
+    isActive: boolean;
+    createdAt: string;
+    updatedAt: string;
+}
+
+// ============================================================================
+// Leaderboard Types
+// ============================================================================
+
+export interface LeaderboardEntry {
+    walletAddress: string;
+    totalTrades: number;
+    wins: number;
+    losses: number;
+    winRate: number;
+    totalPnl: number;
+    roi: number;
+    avgTradeSize: number;
+    lastTradeDate: string;
+    rank: number;
+}
+
+// ============================================================================  
+// WebSocket Subscription Types
+// ============================================================================
+
+export interface SubscriptionHealth {
+    isConnected: boolean;
+    subscribedCount: number;
+    lastMessageAt: string | null;
+    uptime: number;
+    reconnectCount: number;
+}
+

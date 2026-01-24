@@ -27,10 +27,12 @@ import {
     scoreConnections as factorConnections,
     scoreTradeVelocity as factorVelocity,
     scoreEventProximity as factorProximity,
+    scoreCorrelatedBets as factorCorrelatedBets,
 } from '../scoring/factors/index.js';
+import { CorrelationDetector } from './correlationDetector.js';
 
 /**
- * 10-Factor Insider Detection Scoring Algorithm (Phase 2)
+ * 11-Factor Insider Detection Scoring Algorithm (Phase 2.1)
  * 
  * Composite score (0-100) with weighted factors:
  * - Wallet Age: 25 pts max (fresh wallet + wc/tx timing)
@@ -43,8 +45,9 @@ import {
  * - Connections: 20 pts max (win rate + PnL stability + shared funding)
  * - Order Flow: 10 pts max (accumulation patterns)
  * - Cluster: 30 pts max (fresh wallet cluster + split bets volume bonus)
+ * - Correlated Bets: 15 pts max (logically consistent positions across related markets)
  * 
- * Total max: 210 pts, normalized to 0-100
+ * Total max: 255 pts, normalized to 0-100
  * Threshold: >configurable flags as "potential high-info trade" (default 58)
  * 
  * Scoring logic has been extracted to: ../scoring/factors/
@@ -54,6 +57,7 @@ export class InsiderScorer {
     private clusterDetector?: ClusterDetector;
     private orderFlowTracker?: OrderFlowTracker;
     private preAnnouncementTracker?: PreAnnouncementTracker;
+    private correlationDetector?: CorrelationDetector;
 
     // Error tracking for monitoring silent failures
     private errorStats = {
@@ -71,12 +75,14 @@ export class InsiderScorer {
         private arkham?: ArkhamClient,
         clusterDetector?: ClusterDetector,
         orderFlowTracker?: OrderFlowTracker,
-        preAnnouncementTracker?: PreAnnouncementTracker
+        preAnnouncementTracker?: PreAnnouncementTracker,
+        correlationDetector?: CorrelationDetector
     ) {
         this.threshold = config.insiderScoreThreshold;
         this.clusterDetector = clusterDetector;
         this.orderFlowTracker = orderFlowTracker;
         this.preAnnouncementTracker = preAnnouncementTracker;
+        this.correlationDetector = correlationDetector;
     }
 
     /**
@@ -190,6 +196,17 @@ export class InsiderScorer {
         // Proximity: is this trade close to market resolution? (last-minute bets)
         const proximityScore = factorProximity(trade.marketEndDate || null, trade.timestamp);
 
+        // Correlated Bets: does this wallet have logically consistent positions on related markets?
+        let correlatedBetsScore = 0;
+        if (this.correlationDetector) {
+            try {
+                const correlationResult = await factorCorrelatedBets(trade, walletProfile, this.correlationDetector);
+                correlatedBetsScore = correlationResult.score;
+            } catch (error) {
+                console.error('[InsiderScorer] Error in correlation detection:', error);
+            }
+        }
+
         const breakdown: ScoreBreakdown = {
             walletAge: walletAgeScore,
             tradeSize: factorTradeSize(trade),
@@ -203,13 +220,14 @@ export class InsiderScorer {
             cluster: clusterScore,
             velocity: velocityScore,
             proximity: proximityScore,
+            correlatedBets: correlatedBetsScore,
             total: 0,
         };
 
         // Sum all factors and normalize to 0-100
         // Max per factor: walletAge(25) + tradeSize(20) + timing(40) + diversification(30) +
         //   onChainSource(15) + specificity(10) + impact(10) + connections(20) +
-        //   orderFlow(10) + cluster(30) + velocity(15) + proximity(15) = 240
+        //   orderFlow(10) + cluster(30) + velocity(15) + proximity(15) + correlatedBets(15) = 255
         const rawTotal =
             breakdown.walletAge +
             breakdown.tradeSize +
@@ -222,7 +240,8 @@ export class InsiderScorer {
             breakdown.orderFlow +
             breakdown.cluster +
             breakdown.velocity +
-            breakdown.proximity;
+            breakdown.proximity +
+            breakdown.correlatedBets;
 
         const maxRawScore = config.scoring.maxRawScore;
         breakdown.total = Math.min(100, Math.round((rawTotal / maxRawScore) * 100));

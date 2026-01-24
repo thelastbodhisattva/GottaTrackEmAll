@@ -181,6 +181,61 @@ export function createMetricsRouter(outcomeTracker: OutcomeTracker): Router {
         }
     });
 
+    /**
+     * GET /api/metrics/leaderboard
+     * Returns PnL leaderboard for tracked wallets
+     * Query params: limit (default 20, max 100)
+     */
+    router.get('/leaderboard', async (req: Request, res: Response) => {
+        if (!isMongoDBConnected()) {
+            res.status(503).json({ error: 'Database not connected' });
+            return;
+        }
+
+        try {
+            const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+            const leaderboard = await outcomeTracker.getLeaderboard(limit);
+            res.json({
+                period: 'all-time',
+                entries: leaderboard,
+                total: leaderboard.length,
+            });
+        } catch (error) {
+            console.error('[MetricsAPI] Failed to get leaderboard:', error);
+            res.status(500).json({ error: 'Failed to get leaderboard' });
+        }
+    });
+
+    /**
+     * GET /api/metrics/leaderboard/:wallet
+     * Returns PnL stats for a specific wallet
+     */
+    router.get('/leaderboard/:wallet', async (req: Request, res: Response) => {
+        if (!isMongoDBConnected()) {
+            res.status(503).json({ error: 'Database not connected' });
+            return;
+        }
+
+        try {
+            const { wallet } = req.params;
+            if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet)) {
+                res.status(400).json({ error: 'Invalid wallet address' });
+                return;
+            }
+
+            const stats = await outcomeTracker.getWalletStats(wallet);
+            if (!stats) {
+                res.status(404).json({ error: 'Wallet not found or no resolved trades' });
+                return;
+            }
+
+            res.json(stats);
+        } catch (error) {
+            console.error('[MetricsAPI] Failed to get wallet stats:', error);
+            res.status(500).json({ error: 'Failed to get wallet stats' });
+        }
+    });
+
     return router;
 }
 

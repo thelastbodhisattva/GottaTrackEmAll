@@ -1,6 +1,7 @@
 import { WebhookClient } from 'discord.js';
 import { config } from '../config/index.js';
 import { EnrichedTrade, AlertConfig } from '../types/index.js';
+import { IWatchlist } from '../db/index.js';
 import { HansonQuotes } from '../utils/hansonQuotes.js';
 import { isTransientError, getErrorMessage, getErrorCode } from '../utils/shared.js';
 
@@ -339,5 +340,120 @@ export class AlertService {
      */
     isConfigured(): boolean {
         return this.discord !== null;
+    }
+
+    /**
+     * Send watchlist-specific alert when a tracked wallet makes a trade
+     * Uses a distinct embed format highlighting the watchlist name
+     */
+    async sendWatchlistAlert(trade: EnrichedTrade, watchlist: IWatchlist): Promise<void> {
+        if (!this.discord) {
+            console.warn('[AlertService] Discord webhook not configured');
+            return;
+        }
+
+        const maxRetries = 3;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const embed = this.createWatchlistEmbed(trade, watchlist);
+                await this.discord.send({
+                    username: "Pencepu Handal",
+                    avatarURL: 'https://64.media.tumblr.com/b1afdfa8b39af8e3d1206a299b00b063/02bbd9820e5a450a-eb/s1280x1920/fa8aa9a12285892788bd7cc12d691240e2bce6a2.png',
+                    embeds: [embed]
+                });
+                console.log(`[AlertService] Sent watchlist alert for "${watchlist.name}" - trade ${trade.id}`);
+                return; // Success
+            } catch (error: unknown) {
+                if (isTransientError(error) && attempt < maxRetries) {
+                    const delay = 1000 * Math.pow(2, attempt - 1);
+                    console.warn(`[AlertService] Watchlist alert failed (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                } else {
+                    console.error('[AlertService] Failed to send watchlist alert:', getErrorMessage(error));
+                    return;
+                }
+            }
+        }
+    }
+
+    /**
+     * Create Discord embed for watchlist alert
+     * Highlights the watchlist name and threshold configuration
+     */
+    private createWatchlistEmbed(trade: EnrichedTrade, watchlist: IWatchlist): any {
+        const color = 0x9B59B6; // Purple for watchlist alerts
+        const threshold = watchlist.alertConfig.minTradeSize;
+
+        const fields: Array<{ name: string; value: string; inline?: boolean }> = [
+            {
+                name: '👁️ Watchlist',
+                value: `**${watchlist.name}**`,
+                inline: true,
+            },
+            {
+                name: '⚙️ Threshold',
+                value: `$${threshold.toLocaleString()}`,
+                inline: true,
+            },
+            {
+                name: '💰 Trade Size',
+                value: `$${trade.sizeUsd.toLocaleString()} (${((trade.sizeUsd / threshold) * 100).toFixed(0)}% of threshold)`,
+                inline: false,
+            },
+            {
+                name: '🎯 Position',
+                value: `${trade.side} @ ${(trade.price * 100).toFixed(1)}%`,
+                inline: true,
+            },
+            {
+                name: '📊 Market',
+                value: this.getMarketLink(trade),
+                inline: false,
+            },
+            {
+                name: '👛 Wallet',
+                value: `\`${trade.walletAddress || 'Unknown'}\``,
+                inline: false,
+            },
+            {
+                name: '🔗 Links',
+                value: this.getTraderLinks(trade),
+                inline: true,
+            },
+        ];
+
+        // Add insider score if available and significant
+        if (trade.insiderScore && trade.insiderScore.breakdown.total >= 30) {
+            const scoreBar = this.createScoreBar(trade.insiderScore.breakdown.total);
+            fields.push({
+                name: `🔍 Insider Score: ${trade.insiderScore.breakdown.total}/100 ${scoreBar}`,
+                value: `Confidence: ${trade.insiderScore.confidence.toUpperCase()}`,
+                inline: false,
+            });
+        }
+
+        // Add wallet stats
+        const profile = trade.walletProfile;
+        fields.push({
+            name: '📈 Wallet Stats',
+            value: [
+                `Trades: ${profile.totalTrades}`,
+                `PNL: $${profile.totalPnl.toFixed(2)}`,
+                `Win Rate: ${(profile.winRate * 100).toFixed(1)}%`,
+            ].join(' | '),
+            inline: false,
+        });
+
+        return {
+            title: `👁️ WATCHLIST ALERT: ${watchlist.name}`,
+            description: watchlist.description || undefined,
+            color,
+            timestamp: trade.timestamp?.toISOString() || new Date().toISOString(),
+            fields,
+            footer: {
+                text: `Threshold: $${threshold.toLocaleString()} | Today at ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`,
+            },
+        };
     }
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { WebSocketPanel } from './WebSocketPanel';
 
 interface AdminStats {
     inMemory: {
@@ -70,6 +71,9 @@ const FACTOR_LABELS: Record<string, string> = {
     connections: 'Connections',
     orderFlow: 'Order Flow',
     cluster: 'Cluster',
+    velocity: 'Velocity',
+    proximity: 'Proximity',
+    correlatedBets: 'Correlated Bets',
 };
 
 export function AdminDashboard() {
@@ -297,6 +301,11 @@ export function AdminDashboard() {
                         ))}
                     </div>
                 )}
+            </section>
+
+            {/* WebSocket Subscription Management */}
+            <section className="admin-ws-section">
+                <WebSocketPanel />
             </section>
 
             {/* Back link */}
