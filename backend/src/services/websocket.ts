@@ -22,6 +22,7 @@ export class PolymarketWebSocket extends EventEmitter {
     private heartbeatInterval: NodeJS.Timeout | null = null;
     private subscribedAssets: string[] = [];
     private isConnecting = false;
+    private isRefreshing = false;  // Prevent concurrent refresh operations
 
     // Diagnostic counters
     private messageCount = 0;
@@ -343,12 +344,68 @@ export class PolymarketWebSocket extends EventEmitter {
         console.log('[WS] Disconnected');
     }
 
+
     /**
      * Check if connected
      */
     isConnected(): boolean {
         return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
     }
+
+    /**
+     * Get currently subscribed asset IDs
+     * Returns a copy to prevent external mutation
+     */
+    getSubscribedAssets(): string[] {
+        return [...this.subscribedAssets];
+    }
+
+    /**
+     * Refresh subscriptions by disconnecting and reconnecting with fresh active markets
+     * This removes closed markets from the subscription list
+     * @param activeAssetIds - Current list of active market asset IDs
+     */
+    async refreshSubscriptions(activeAssetIds: string[]): Promise<void> {
+        if (activeAssetIds.length === 0) {
+            console.warn('[WS] Cannot refresh with empty asset list');
+            return;
+        }
+
+        // Prevent concurrent refresh operations
+        if (this.isRefreshing) {
+            console.warn('[WS] Refresh already in progress, skipping...');
+            return;
+        }
+
+        try {
+            this.isRefreshing = true;
+
+            const currentCount = this.subscribedAssets.length;
+            const removedCount = currentCount - activeAssetIds.length;
+
+            console.log(`[WS] 🔄 Refreshing subscriptions...`);
+            console.log(`[WS]    Current: ${currentCount} assets`);
+            console.log(`[WS]    Active: ${activeAssetIds.length} assets`);
+            if (removedCount > 0) {
+                console.log(`[WS]    Removing: ${removedCount} closed markets`);
+            }
+
+            // Disconnect from current WebSocket
+            this.disconnect();
+
+            // Wait for clean disconnect
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Reconnect with fresh active markets only
+            await this.connect(activeAssetIds);
+
+            console.log(`[WS] ✅ Subscription refresh complete`);
+        } finally {
+            // Always clear the flag, even if error occurs
+            this.isRefreshing = false;
+        }
+    }
+
 
     // Type-safe event emitter methods
     override on<K extends keyof PolymarketWebSocketEvents>(

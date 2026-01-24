@@ -6,6 +6,15 @@ import { Trade } from '../../types/index.js';
 import { PolygonRpcClient } from '../../clients/polygonRpc.js';
 import { ArkhamClient } from '../../clients/arkham.js';
 
+/** Return type for on-chain scoring */
+export interface OnChainScoreResult {
+    score: number;
+    fundingSource?: {
+        type: 'exchange' | 'bridge' | 'contract' | 'unknown';
+        label: string;
+    };
+}
+
 /**
  * Factor 5: On-Chain Source (15 pts max)
  * CEX deposits, fresh funding, bridge transfers, dormant reactivation
@@ -15,14 +24,21 @@ export async function scoreOnChainSource(
     firstTxTime: number | null,
     polygonRpc: PolygonRpcClient,
     arkham?: ArkhamClient
-): Promise<number> {
+): Promise<OnChainScoreResult> {
     let score = 0;
+    let detectedFundingSource: OnChainScoreResult['fundingSource'] = undefined;
 
     try {
         // Use Alchemy to detect funding source (CEX, bridge, contract)
         const fundingSource = await polygonRpc.detectFundingSource(trade.walletAddress);
 
         if (fundingSource) {
+            // Store the detected funding source for propagation
+            detectedFundingSource = {
+                type: fundingSource.type as 'exchange' | 'bridge' | 'contract' | 'unknown',
+                label: fundingSource.label || fundingSource.type,
+            };
+
             if (fundingSource.type === 'exchange') {
                 score += 10;
                 console.log(`[OnChainFactor] CEX funding: ${fundingSource.label} (+10)`);
@@ -64,5 +80,5 @@ export async function scoreOnChainSource(
     if (finalScore > 0) {
         console.log(`[OnChainFactor] Score: ${finalScore}/15`);
     }
-    return finalScore;
+    return { score: finalScore, fundingSource: detectedFundingSource };
 }

@@ -125,7 +125,7 @@ export class AlertService {
             },
             {
                 name: '📊 Market',
-                value: trade.marketTitle || trade.marketId,
+                value: this.getMarketLink(trade),
                 inline: false,
             },
             {
@@ -134,10 +134,8 @@ export class AlertService {
                 inline: false,
             },
             {
-                name: '🔗 Profile',
-                value: (trade.proxyWalletAddress || trade.walletAddress) && trade.walletAddress !== 'Unknown'
-                    ? `[View on Polymarket](https://polymarket.com/profile/${trade.proxyWalletAddress || trade.walletAddress})`
-                    : 'N/A',
+                name: '🔗 Links',
+                value: this.getTraderLinks(trade),
                 inline: true,
             },
             {
@@ -244,6 +242,43 @@ export class AlertService {
             case 'contract': return '📜';  // Smart contract
             default: return '❓';         // Unknown
         }
+    }
+
+    /**
+     * Get clickable market link for Discord embed
+     * Uses eventSlug or marketSlug to construct proper Polymarket URL
+     */
+    private getMarketLink(trade: EnrichedTrade): string {
+        const title = trade.marketTitle || trade.marketId;
+
+        // Try to construct Polymarket URL from slug
+        const slug = trade.eventSlug || trade.marketSlug;
+        if (slug) {
+            return `[${title}](https://polymarket.com/event/${slug})`;
+        }
+
+        // Fallback: just show title without link
+        return title;
+    }
+
+    /**
+     * Get links to trader profile on Polymarket and Polygonscan
+     */
+    private getTraderLinks(trade: EnrichedTrade): string {
+        const links: string[] = [];
+
+        // Polymarket profile link (uses proxy wallet)
+        const polymarketAddress = trade.proxyWalletAddress || trade.walletAddress;
+        if (polymarketAddress && polymarketAddress !== 'Unknown') {
+            links.push(`[Polymarket](https://polymarket.com/profile/${polymarketAddress})`);
+        }
+
+        // Polygonscan link for the actual EOA
+        if (trade.walletAddress && trade.walletAddress !== 'Unknown') {
+            links.push(`[Polygonscan](https://polygonscan.com/address/${trade.walletAddress})`);
+        }
+
+        return links.length > 0 ? links.join(' | ') : 'N/A';
     }
 
     /**

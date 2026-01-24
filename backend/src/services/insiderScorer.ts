@@ -136,7 +136,7 @@ export class InsiderScorer {
 
         const [
             diversificationScore,
-            onChainScore,
+            onChainResult,
             timingScore,
             impactScore,
             connectionsScore,
@@ -147,7 +147,7 @@ export class InsiderScorer {
             factorDiversification(profileAddress, walletProfile, this.polymarketProfile, trade)
                 .catch(e => { this.recordError('diversification', e); failedFactors.push('diversification'); return 0; }),
             factorOnChainSource(trade, firstTxTime, this.polygonRpc, this.arkham)
-                .catch(e => { this.recordError('onChain', e); failedFactors.push('onChain'); return 0; }),
+                .catch(e => { this.recordError('onChain', e); failedFactors.push('onChain'); return { score: 0 }; }),
             Promise.resolve(factorTiming(trade, this.preAnnouncementTracker)),
             Promise.resolve(factorImpact(trade)),
             factorConnections(profileAddress, walletProfile, this.threshold, this.clusterDetector)
@@ -155,6 +155,10 @@ export class InsiderScorer {
             Promise.resolve(factorWalletAge(trade, firstTxTime)),
             factorSpecificity(trade, walletProfile, this.polymarketProfile),
         ]);
+
+        // Extract score and fundingSource from onChainResult
+        const onChainScore = onChainResult.score;
+        const detectedFundingSource = (onChainResult as { score: number; fundingSource?: { type: 'exchange' | 'bridge' | 'contract' | 'unknown'; label: string } }).fundingSource;
 
         // Cluster detection (requires MongoDB)
         let clusterScore = 0;
@@ -254,6 +258,7 @@ export class InsiderScorer {
             ethicsNote: isFlagged ? HansonQuotes.getNoteForScore(breakdown.total) : '',
             calculatedAt: new Date(),
             degradedFactors: failedFactors.length > 0 ? failedFactors : undefined,
+            fundingSource: detectedFundingSource,
         };
     }
 

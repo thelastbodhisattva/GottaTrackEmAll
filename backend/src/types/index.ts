@@ -65,6 +65,8 @@ export interface EnrichedTrade extends Trade {
         type: 'exchange' | 'bridge' | 'contract' | 'unknown';
         label: string;
     };
+    marketSlug?: string;   // For constructing Polymarket market URL
+    eventSlug?: string;    // For constructing Polymarket event URL
 }
 
 // ============================================================================
@@ -101,6 +103,11 @@ export interface InsiderScore {
      * Used to indicate degraded/partial scoring mode.
      */
     degradedFactors?: ('diversification' | 'onChain' | 'connection' | 'cluster')[];
+    /** Detected funding source from on-chain analysis */
+    fundingSource?: {
+        type: 'exchange' | 'bridge' | 'contract' | 'unknown';
+        label: string;
+    };
 }
 
 // ============================================================================
@@ -171,6 +178,8 @@ export interface Market {
     lastPrice: number;
     resolved: boolean;
     resolutionOutcome?: string;
+    slug?: string;        // Market slug for URL construction
+    eventSlug?: string;   // Event slug (some markets are grouped under events)
 }
 
 // ============================================================================

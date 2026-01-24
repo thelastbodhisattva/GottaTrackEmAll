@@ -7,10 +7,12 @@ import { motion } from 'framer-motion';
  */
 export function ThemeToggle() {
     const [isDark, setIsDark] = useState(() => {
-        // Check localStorage first, then system preference
+        // Check localStorage first
         const saved = localStorage.getItem('theme');
         if (saved) return saved === 'dark';
-        return window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+        // Default to dark mode for the intended "Whale Hunting" aesthetic
+        return true;
     });
 
     useEffect(() => {

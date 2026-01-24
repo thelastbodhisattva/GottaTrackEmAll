@@ -91,6 +91,7 @@ const preAnnouncementInterval = setInterval(async () => {
 
 // Periodic market discovery (every 30 mins)
 // Scans for new active markets (Top 15k by volume) to add to subscription
+// Also cleans up closed markets to prevent subscription bloat
 const discoveryInterval = setInterval(async () => {
     console.log('🔍 Running periodic market discovery...');
     const startUsage = process.memoryUsage();
@@ -101,8 +102,29 @@ const discoveryInterval = setInterval(async () => {
         const newAssetIds = await marketFetcher.getTargetCategoryAssetIds();
 
         if (newAssetIds.length > 0) {
-            await polymarketWs.updateSubscriptions(newAssetIds);
-            console.log(`✅ Market discovery complete. Checked ${newAssetIds.length} assets.`);
+            // Check which of our subscribed assets are no longer active (closed markets)
+            const subscribedAssets = polymarketWs.getSubscribedAssets();
+            const nowClosed = subscribedAssets.filter(id => !newAssetIds.includes(id));
+
+            if (nowClosed.length > 0) {
+                console.log(`[Discovery] 🧹 Found ${nowClosed.length} closed markets (${((nowClosed.length / subscribedAssets.length) * 100).toFixed(1)}% of subscriptions)`);
+            }
+
+            // Decision: When to do full refresh vs incremental update
+            const bloatPercentage = (nowClosed.length / subscribedAssets.length) * 100;
+            const shouldRefresh = nowClosed.length >= 10 || bloatPercentage >= 50;
+
+            if (shouldRefresh) {
+                // Full refresh: disconnect and reconnect with only active markets
+                console.log(`[Discovery] 🔄 Triggering full refresh (${nowClosed.length} closed markets to remove)`);
+                await polymarketWs.refreshSubscriptions(newAssetIds);
+                console.log(`✅ Subscription refresh complete. Now tracking: ${newAssetIds.length} markets`);
+            } else {
+                // Incremental update: just add new markets (keep old/closed ones for now)
+                await polymarketWs.updateSubscriptions(newAssetIds);
+                const totalAfter = polymarketWs.getSubscribedAssets().length;
+                console.log(`✅ Market discovery complete. Total subscriptions: ${totalAfter}`);
+            }
         } else {
             console.log('✅ Market discovery complete. No new assets found.');
         }

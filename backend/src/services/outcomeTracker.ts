@@ -73,6 +73,54 @@ export class OutcomeTracker {
     }
 
     /**
+     * Backfill all unresolved markets in the database
+     * Call this once to retroactively fix markets that weren't resolved properly
+     */
+    async backfillUnresolvedMarkets(): Promise<{ checked: number; resolved: number; failed: number }> {
+        if (!isMongoDBConnected()) {
+            console.error('[OutcomeTracker] MongoDB not connected - cannot backfill');
+            return { checked: 0, resolved: 0, failed: 0 };
+        }
+
+        console.log('[OutcomeTracker] 🔄 Starting backfill of all unresolved markets...');
+
+        try {
+            // Get ALL unresolved markets (no date filter)
+            const unresolvedMarkets = await Market.find({ resolved: false });
+
+            console.log(`[OutcomeTracker] Found ${unresolvedMarkets.length} unresolved markets to check`);
+
+            let resolved = 0;
+            let failed = 0;
+
+            for (const market of unresolvedMarkets) {
+                try {
+                    // Add small delay to avoid rate limiting
+                    await new Promise(r => setTimeout(r, 200));
+
+                    const outcome = await this.fetchMarketOutcome(market.marketId);
+                    if (outcome) {
+                        await this.updateMarketOutcome(market.marketId, outcome);
+                        resolved++;
+                    }
+                } catch (error) {
+                    failed++;
+                    console.error(`[OutcomeTracker] Failed to backfill market ${market.marketId.slice(0, 10)}...:`, error);
+                }
+            }
+
+            // Update metrics after backfill
+            await this.updateDailyMetrics();
+
+            console.log(`[OutcomeTracker] ✅ Backfill complete: ${resolved}/${unresolvedMarkets.length} resolved, ${failed} failed`);
+            return { checked: unresolvedMarkets.length, resolved, failed };
+        } catch (error) {
+            console.error('[OutcomeTracker] Failed to backfill markets:', error);
+            return { checked: 0, resolved: 0, failed: 0 };
+        }
+    }
+
+    /**
      * Check if a market title indicates a short-duration crypto market
      */
     private isShortDurationMarket(marketTitle: string): boolean {
@@ -175,28 +223,28 @@ export class OutcomeTracker {
         const GAMMA_API_URL = 'https://gamma-api.polymarket.com';
 
         try {
-            // Try by condition ID first (most markets use this)
-            let response = await fetch(`${GAMMA_API_URL}/markets?condition_id=${marketId}`);
+            let market: any = null;
 
-            if (!response.ok || (await response.clone().json() as any[]).length === 0) {
-                // Fallback: try by clob_token_ids (for token ID-based lookups)
-                response = await fetch(`${GAMMA_API_URL}/markets?clob_token_ids=${marketId}&limit=1`);
+            // Try different query strategies to find the market
+            const queryStrategies = [
+                `${GAMMA_API_URL}/markets?clob_token_ids=${marketId}`,  // Most common: token ID
+                `${GAMMA_API_URL}/markets?condition_id=${marketId}`,   // Some markets use condition ID
+            ];
+
+            for (const url of queryStrategies) {
+                try {
+                    const response = await fetch(url);
+                    if (response.ok) {
+                        const data = await response.json() as any;
+                        if (Array.isArray(data) && data.length > 0) {
+                            market = data[0];
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    // Try next strategy
+                }
             }
-
-            if (!response.ok || (await response.clone().json() as any[]).length === 0) {
-                // Fallback: try by slug if both fail
-                response = await fetch(`${GAMMA_API_URL}/markets?id=${marketId}`);
-            }
-
-            if (!response.ok) {
-                console.warn(`[OutcomeTracker] Gamma API returned ${response.status} for market ${marketId.slice(0, 10)}...`);
-                return null;
-            }
-
-            const data = await response.json() as any;
-
-            // Gamma API returns an array - get first match
-            const market = Array.isArray(data) && data.length > 0 ? data[0] : data;
 
             if (!market) {
                 console.warn(`[OutcomeTracker] No market found for ${marketId.slice(0, 10)}...`);
@@ -204,31 +252,87 @@ export class OutcomeTracker {
             }
 
             // Debug: log the relevant fields from Gamma API
-            console.log(`[OutcomeTracker] Market ${marketId.slice(0, 10)}... status: closed=${market.closed}, resolved=${market.resolved}, outcome=${market.outcome}, winner=${market.winner}`);
+            console.log(`[OutcomeTracker] Market ${marketId.slice(0, 10)}... status: closed=${market.closed}, umaResolutionStatus=${market.umaResolutionStatus}, outcomePrices=${market.outcomePrices}`);
 
             // Gamma API uses different field names than CLOB
-            // Check if market is resolved and get outcome
-            const isClosed = market.closed === true || market.resolved === true;
+            // Check if market is resolved - use umaResolutionStatus as primary indicator
+            const isClosed = market.closed === true;
+            const isResolved = market.umaResolutionStatus === 'resolved';
 
-            // Gamma API outcome fields (in order of preference)
-            const outcomeValue = market.outcome ?? market.winner ?? market.resolutionOutcome ?? market.resolution;
+            // Try multiple ways to determine the outcome
+            // Method 1: Direct outcome fields (legacy/some markets)
+            let outcomeValue = market.outcome ?? market.winner ?? market.resolutionOutcome ?? market.resolution;
 
-            if (isClosed && outcomeValue !== undefined && outcomeValue !== null) {
-                // Outcome can be: "Yes"/"No", 1/0, or token_id
-                const outcomeStr = String(outcomeValue).toLowerCase();
+            // Method 2: Parse outcomePrices - price of 1 means that outcome won
+            // outcomePrices format: "[\"0\", \"1\"]" or "[\"1\", \"0\"]"
+            // outcomes format: "[\"Yes\", \"No\"]" or "[\"Up\", \"Down\"]"
+            if (outcomeValue === undefined && market.outcomePrices && market.outcomes) {
+                try {
+                    const prices = typeof market.outcomePrices === 'string'
+                        ? JSON.parse(market.outcomePrices)
+                        : market.outcomePrices;
+                    const outcomes = typeof market.outcomes === 'string'
+                        ? JSON.parse(market.outcomes)
+                        : market.outcomes;
 
-                if (outcomeStr === 'yes' || outcomeStr === '1' || outcomeValue === 1) {
-                    console.log(`[OutcomeTracker] ✅ Market ${marketId.slice(0, 10)}... resolved to YES`);
+                    // Find which outcome has price 1 (or close to 1)
+                    const winnerIndex = prices.findIndex((p: string | number) => {
+                        const price = typeof p === 'string' ? parseFloat(p) : p;
+                        return price >= 0.99; // Winner has price ~1
+                    });
+
+                    if (winnerIndex !== -1 && outcomes[winnerIndex]) {
+                        outcomeValue = outcomes[winnerIndex];
+                        console.log(`[OutcomeTracker] Parsed outcomePrices: winner is "${outcomeValue}" (index ${winnerIndex})`);
+                    }
+                } catch (e) {
+                    console.warn(`[OutcomeTracker] Failed to parse outcomePrices: ${e}`);
+                }
+            }
+
+            if ((isClosed || isResolved) && outcomeValue !== undefined && outcomeValue !== null) {
+                // Outcome can be: "Yes"/"No", "Up"/"Down", team names, player names, etc.
+                const outcomeStr = String(outcomeValue).toLowerCase().trim();
+
+                // Map common YES-equivalent outcomes (first position in binary markets)
+                const yesEquivalents = ['yes', 'up', 'true', '1', 'over'];
+                // Map common NO-equivalent outcomes (second position in binary markets)
+                const noEquivalents = ['no', 'down', 'false', '0', 'under'];
+
+                if (yesEquivalents.includes(outcomeStr) || outcomeValue === 1 || outcomeValue === true) {
+                    console.log(`[OutcomeTracker] ✅ Market ${marketId.slice(0, 10)}... resolved to YES (${outcomeValue})`);
                     return 'YES';
-                } else if (outcomeStr === 'no' || outcomeStr === '0' || outcomeValue === 0) {
-                    console.log(`[OutcomeTracker] ✅ Market ${marketId.slice(0, 10)}... resolved to NO`);
+                } else if (noEquivalents.includes(outcomeStr) || outcomeValue === 0 || outcomeValue === false) {
+                    console.log(`[OutcomeTracker] ✅ Market ${marketId.slice(0, 10)}... resolved to NO (${outcomeValue})`);
                     return 'NO';
+                } else {
+                    // For non-binary markets (sports teams, player names, etc.)
+                    // We need to check if the trade's side matches the winning outcome
+                    // For now, map the first outcome to YES, second to NO (standard binary format)
+                    // This handles cases like ["Lakers", "Celtics"] where index 0 = YES position
+                    if (market.outcomes) {
+                        const outcomes = typeof market.outcomes === 'string'
+                            ? JSON.parse(market.outcomes)
+                            : market.outcomes;
+                        const winnerIndex = outcomes.findIndex((o: string) =>
+                            o.toLowerCase().trim() === outcomeStr
+                        );
+                        if (winnerIndex === 0) {
+                            console.log(`[OutcomeTracker] ✅ Market ${marketId.slice(0, 10)}... resolved to YES (first outcome: ${outcomeValue})`);
+                            return 'YES';
+                        } else if (winnerIndex >= 1) {
+                            console.log(`[OutcomeTracker] ✅ Market ${marketId.slice(0, 10)}... resolved to NO (outcome index ${winnerIndex}: ${outcomeValue})`);
+                            return 'NO';
+                        }
+                    }
+                    // Fallback: log and skip if we can't determine
+                    console.warn(`[OutcomeTracker] ⚠️ Market ${marketId.slice(0, 10)}... has non-binary outcome: ${outcomeValue}`);
                 }
             }
 
             // Market is closed but not yet resolved (waiting for oracle)
-            if (isClosed && outcomeValue === undefined) {
-                console.log(`[OutcomeTracker] ⏳ Market ${marketId.slice(0, 10)}... closed but awaiting resolution`);
+            if (isClosed && !isResolved) {
+                console.log(`[OutcomeTracker] ⏳ Market ${marketId.slice(0, 10)}... closed but awaiting resolution (umaStatus: ${market.umaResolutionStatus})`);
             }
 
             return null;

@@ -304,6 +304,9 @@ export class TradeProcessor {
             trade.marketEndDate = market.endDate;
             trade.marketTotalVolume = market.volume;
             trade.marketLiquidity = market.liquidity;
+            // Store slug for Polymarket URL construction in Discord alerts
+            (trade as any).marketSlug = market.slug;
+            (trade as any).eventSlug = market.eventSlug;
         } else {
             console.warn(`[TradeProcessor] Market not found for ${trade.marketId.slice(0, 10)}...`);
         }
@@ -350,6 +353,7 @@ export class TradeProcessor {
             walletProfile: finalWalletProfile,
             isWhale,
             isFlagged,
+            fundingSource: insiderScore.fundingSource,
         };
     }
 

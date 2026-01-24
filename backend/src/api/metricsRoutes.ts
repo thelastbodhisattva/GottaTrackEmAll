@@ -156,6 +156,31 @@ export function createMetricsRouter(outcomeTracker: OutcomeTracker): Router {
         }
     });
 
+    /**
+     * POST /api/metrics/backfill
+     * Retroactively resolve all unresolved markets in the database
+     * This is a one-time operation to fix markets that weren't resolved properly
+     */
+    router.post('/backfill', async (_req: Request, res: Response) => {
+        if (!isMongoDBConnected()) {
+            res.status(503).json({ error: 'Database not connected' });
+            return;
+        }
+
+        try {
+            console.log('[MetricsAPI] Starting market backfill...');
+            const result = await outcomeTracker.backfillUnresolvedMarkets();
+            res.json({
+                success: true,
+                message: 'Backfill completed',
+                ...result
+            });
+        } catch (error) {
+            console.error('[MetricsAPI] Failed to backfill:', error);
+            res.status(500).json({ error: 'Failed to backfill markets' });
+        }
+    });
+
     return router;
 }
 

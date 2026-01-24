@@ -214,6 +214,8 @@ export class MarketService {
                 closed?: boolean;
                 resolved?: boolean;
                 clobTokenIds?: string;
+                slug?: string;  // Market slug for URL
+                events?: Array<{ slug?: string; ticker?: string }>;  // Event info
             }>;
 
             if (!markets || markets.length === 0) {
@@ -245,6 +247,9 @@ export class MarketService {
                 parsedEndDate = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
             }
 
+            // Extract event slug if available (events[0].slug)
+            const eventSlug = data.events?.[0]?.slug || data.events?.[0]?.ticker;
+
             const market: Market = {
                 id: data.conditionId || data.id,
                 conditionId: data.conditionId,
@@ -259,6 +264,8 @@ export class MarketService {
                 lastPrice: 0,
                 resolved: data.resolved || data.closed || false,
                 resolutionOutcome: '',
+                slug: data.slug,           // Store market slug for URL
+                eventSlug: eventSlug,      // Store event slug for URL
             };
 
             // Cache the market by BOTH conditionId AND tokenId
