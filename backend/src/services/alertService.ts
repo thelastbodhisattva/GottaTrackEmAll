@@ -6,10 +6,13 @@ import { HansonQuotes } from '../utils/hansonQuotes.js';
 import { isTransientError, getErrorMessage, getErrorCode } from '../utils/shared.js';
 
 /**
- * Discord webhook alert service for whale and insider notifications
+ * Discord and Telegram alert service for whale and insider notifications
  */
 export class AlertService {
     private discord: WebhookClient | null = null;
+    private telegramEnabled: boolean = false;
+    private readonly telegramBotToken: string;
+    private readonly telegramChatId: string;
     private readonly config: AlertConfig;
 
     constructor(alertConfig?: Partial<AlertConfig>) {
@@ -23,20 +26,49 @@ export class AlertService {
         if (this.config.discordWebhook) {
             this.discord = new WebhookClient({ url: this.config.discordWebhook });
         }
+
+        // Telegram setup
+        this.telegramBotToken = config.telegramBotToken;
+        this.telegramChatId = config.telegramChatId;
+        this.telegramEnabled = !!(this.telegramBotToken && this.telegramChatId);
+        if (this.telegramEnabled) {
+            console.log('[AlertService] Telegram alerts enabled');
+        }
     }
 
     /**
-     * Send whale trade alert
+     * Send whale trade alert to Discord and Telegram (parallel)
      */
     async sendWhaleAlert(trade: EnrichedTrade, showEthics?: boolean): Promise<void> {
-        if (!this.discord) {
-            console.warn('[AlertService] Discord webhook not configured');
+        const useEthics = showEthics ?? this.config.showEthicsNotes;
+
+        // Send to both channels in PARALLEL for reduced latency
+        const alertPromises: Promise<void>[] = [];
+
+        if (this.discord) {
+            alertPromises.push(this.sendDiscordAlert(trade, useEthics));
+        }
+
+        if (this.telegramEnabled) {
+            alertPromises.push(this.sendTelegramAlert(trade));
+        }
+
+        if (alertPromises.length === 0) {
+            console.warn('[AlertService] No alert channels configured (Discord/Telegram)');
             return;
         }
 
-        const useEthics = showEthics ?? this.config.showEthicsNotes;
-        const maxRetries = 3;
+        // Use allSettled to ensure both complete regardless of individual failures
+        await Promise.allSettled(alertPromises);
+    }
 
+    /**
+     * Send Discord embed alert with retry logic
+     */
+    private async sendDiscordAlert(trade: EnrichedTrade, useEthics: boolean): Promise<void> {
+        if (!this.discord) return;
+
+        const maxRetries = 3;
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 const embed = this.createTradeEmbed(trade, useEthics);
@@ -45,19 +77,96 @@ export class AlertService {
                     avatarURL: 'https://64.media.tumblr.com/b1afdfa8b39af8e3d1206a299b00b063/02bbd9820e5a450a-eb/s1280x1920/fa8aa9a12285892788bd7cc12d691240e2bce6a2.png',
                     embeds: [embed]
                 });
-                console.log(`[AlertService] Sent alert for trade ${trade.id}`);
-                return; // Success, exit retry loop
+                console.log(`[AlertService] Sent Discord alert for trade ${trade.id}`);
+                return;
             } catch (error: unknown) {
                 if (isTransientError(error) && attempt < maxRetries) {
-                    const delay = 1000 * Math.pow(2, attempt - 1); // Exponential backoff
+                    const delay = 1000 * Math.pow(2, attempt - 1);
                     console.warn(`[AlertService] Discord send failed (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
                     await new Promise(resolve => setTimeout(resolve, delay));
                 } else {
                     console.error('[AlertService] Failed to send Discord alert:', getErrorMessage(error));
-                    return; // Give up after max retries or non-transient error
+                    return;
                 }
             }
         }
+    }
+
+    /**
+     * Send Telegram alert with retry logic
+     */
+    private async sendTelegramAlert(trade: EnrichedTrade): Promise<void> {
+        const message = this.formatTelegramMessage(trade);
+        const url = `https://api.telegram.org/bot${this.telegramBotToken}/sendMessage`;
+
+        const maxRetries = 3;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: this.telegramChatId,
+                        text: message,
+                        parse_mode: 'Markdown',
+                        disable_web_page_preview: true,
+                    }),
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Telegram API error: ${response.status}`);
+                }
+
+                console.log(`[AlertService] Sent Telegram alert for trade ${trade.id}`);
+                return;
+            } catch (error: unknown) {
+                if (attempt < maxRetries) {
+                    const delay = 1000 * Math.pow(2, attempt - 1);
+                    console.warn(`[AlertService] Telegram send failed (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                } else {
+                    console.error('[AlertService] Failed to send Telegram alert:', getErrorMessage(error));
+                    return;
+                }
+            }
+        }
+    }
+
+    /**
+     * Format trade alert for Telegram (plain text with Markdown)
+     */
+    private formatTelegramMessage(trade: EnrichedTrade): string {
+        const isFlagged = trade.isFlagged;
+        const emoji = isFlagged ? '🚨' : '🐋';
+        const score = trade.insiderScore.breakdown.total;
+        const walletShort = trade.walletAddress
+            ? `${trade.walletAddress.slice(0, 6)}...${trade.walletAddress.slice(-4)}`
+            : 'Unknown';
+
+        const lines = [
+            `${emoji} *${isFlagged ? 'INSIDER ALERT' : 'Whale Trade'}*`,
+            ``,
+            `💰 *$${trade.sizeUsd.toLocaleString()}* ${trade.side} @ ${(trade.price * 100).toFixed(1)}%`,
+            `📊 ${trade.marketTitle.slice(0, 50)}${trade.marketTitle.length > 50 ? '...' : ''}`,
+            `👛 \`${walletShort}\``,
+            `🏷️ ${trade.marketCategory.toUpperCase()}`,
+        ];
+
+        if (isFlagged) {
+            lines.push(`🔍 *Insider Score: ${score}/100*`);
+        }
+
+        // Add links
+        const marketUrl = trade.eventSlug && trade.marketSlug
+            ? `https://polymarket.com/event/${trade.eventSlug}/${trade.marketSlug}`
+            : null;
+
+        if (marketUrl) {
+            lines.push(``);
+            lines.push(`[View Market](${marketUrl})`);
+        }
+
+        return lines.join('\n');
     }
 
     /**

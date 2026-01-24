@@ -24,6 +24,10 @@ export class PolymarketWebSocket extends EventEmitter {
     private isConnecting = false;
     private isRefreshing = false;  // Prevent concurrent refresh operations
 
+    // Reconnect cooldown: reset attempts after 10 min of stable connection
+    private lastSuccessfulConnection = 0;
+    private readonly reconnectCooldownMs = 10 * 60 * 1000; // 10 minutes
+
     // Diagnostic counters
     private messageCount = 0;
     private tradeEmitCount = 0;
@@ -55,6 +59,7 @@ export class PolymarketWebSocket extends EventEmitter {
                 this.ws.on('open', async () => {
                     console.log('[WS] Connected to Polymarket');
                     this.reconnectAttempts = 0;
+                    this.lastSuccessfulConnection = Date.now();
                     this.isConnecting = false;
                     this.startHeartbeat();
                     await this.subscribeToAssets(assetIds);
@@ -314,6 +319,15 @@ export class PolymarketWebSocket extends EventEmitter {
      * Handle reconnection with exponential backoff
      */
     private handleReconnect(): void {
+        // Reset attempts if connection was stable for 10+ minutes (cooldown window)
+        if (this.lastSuccessfulConnection > 0) {
+            const stableTime = Date.now() - this.lastSuccessfulConnection;
+            if (stableTime >= this.reconnectCooldownMs) {
+                console.log(`[WS] Connection was stable for ${Math.floor(stableTime / 60000)}min, resetting attempts`);
+                this.reconnectAttempts = 0;
+            }
+        }
+
         if (this.reconnectAttempts >= this.maxReconnects) {
             console.error('[WS] Max reconnection attempts reached');
             this.emit('error', new Error('Max reconnection attempts reached'));

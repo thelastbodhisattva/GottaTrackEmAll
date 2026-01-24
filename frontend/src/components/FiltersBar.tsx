@@ -5,6 +5,8 @@ interface FiltersBarProps {
     onCategoryChange: (category: MarketCategory | 'all') => void;
     flaggedOnly: boolean;
     onFlaggedOnlyChange: (flaggedOnly: boolean) => void;
+    anomalyOnly: boolean;
+    onAnomalyOnlyChange: (anomalyOnly: boolean) => void;
     minSize: number;
     onMinSizeChange: (size: number) => void;
 }
@@ -14,6 +16,8 @@ export function FiltersBar({
     onCategoryChange,
     flaggedOnly,
     onFlaggedOnlyChange,
+    anomalyOnly,
+    onAnomalyOnlyChange,
     minSize,
     onMinSizeChange,
 }: FiltersBarProps) {
@@ -60,7 +64,16 @@ export function FiltersBar({
                     checked={flaggedOnly}
                     onChange={(e) => onFlaggedOnlyChange(e.target.checked)}
                 />
-                <span>🚨 Insider Signals Only</span>
+                <span>🚨 Signals Only</span>
+            </label>
+
+            <label className="filter-checkbox">
+                <input
+                    type="checkbox"
+                    checked={anomalyOnly}
+                    onChange={(e) => onAnomalyOnlyChange(e.target.checked)}
+                />
+                <span>⚡ Anomaly Only</span>
             </label>
         </div>
     );

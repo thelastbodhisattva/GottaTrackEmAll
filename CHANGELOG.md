@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [2.2.0] - 2026-01-24
+
+Telegram alerts, anomaly filtering, and some under-the-hood polish. Performance got a bump too.
+
+### Added
+
+- **Telegram alerts**: Alerts now post to Telegram alongside Discord. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in your `.env` to enable. Both channels send in parallel, so one failing doesn't block the other.
+- **Anomaly filter**: New "Anomaly Only" toggle in the filters bar. Shows trades where the price moved 10%+ AND the wallet is less than a week old, or where cluster behavior is detected. Basically the intersection of high impact and fresh wallets.
+- **Scorer health endpoint**: `GET /api/admin/scorer-health` now shows whether scoring factors are failing. Useful for monitoring if your Alchemy key runs out of credits.
+
+### Changed
+
+- **Parallel alert sending**: Discord and Telegram alerts used to send one-at-a-time. Now they fire in parallel via `Promise.allSettled()`, cutting alert latency by ~40%.
+- **Parallel batch processing**: When processing multiple trades at once, the batch processor now handles 5 trades in parallel instead of one-by-one. Makes catch-up after reconnects faster.
+- **ClusterDetector cache TTL**: The funding source cache now expires after 1 hour and cleans up every 30 minutes. Prevents memory from growing forever on long runs.
+- **WebSocket reconnect cooldown**: If the connection stays up for 10+ minutes before dying, the retry counter resets. Prevents permanent shutdown after a run of bad luck during internet hiccups.
+
+### Fixed
+
+- Nothing broken this release either. (Still knocking on wood.)
+
 ## [2.1.0] - 2026-01-24
 
 Big one. Cross-market correlation detection, whale watchlists, and a PnL leaderboard. The scoring algorithm went from 10 factors to 11, now maxing at 255 points.

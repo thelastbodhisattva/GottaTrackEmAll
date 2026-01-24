@@ -61,6 +61,7 @@ export interface EnrichedTrade extends Trade {
     walletProfile: WalletProfile;
     isWhale: boolean;
     isFlagged: boolean;
+    isAnomaly?: boolean;       // True if high impact + fresh wallet or cluster detected
     fundingSource?: {
         type: 'exchange' | 'bridge' | 'contract' | 'unknown';
         label: string;

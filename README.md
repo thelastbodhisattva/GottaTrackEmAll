@@ -77,13 +77,23 @@ You'll need MongoDB and Redis running locally, or point to remote instances via 
 | `PORT` | Backend port | 3001 |
 | `MONGODB_URI` | Mongo connection string | mongodb://localhost:27017/whale-tracker |
 | `REDIS_URL` | Redis connection string | redis://localhost:6379 |
-| `WHALE_THRESHOLD_USD` | Min trade size to track | 1000 |
+| `WHALE_THRESHOLD_USD` | Min trade size to track | 15000 |
 | `INSIDER_SCORE_THRESHOLD` | Score threshold for alerts | 65 |
 | `ALCHEMY_API_KEY` | For wallet resolution | Required |
 | `POLYGONSCAN_API_KEY` | Wallet age lookups | Optional |
 | `DISCORD_WEBHOOK_URL` | Alert destination | Optional |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token (get from @BotFather) | Optional |
+| `TELEGRAM_CHAT_ID` | Telegram chat/group ID | Optional |
 
-## New in v2.1
+## New in v2.2
+
+- **Telegram alerts**: Configure with bot token and chat ID, alerts post to both Discord and Telegram in parallel
+- **Anomaly filter**: Quick toggle to show only high-impact trades from fresh wallets or cluster activity
+- **Scorer health endpoint**: `GET /api/admin/scorer-health` for monitoring scoring factor errors
+- **Performance bump**: Parallel alert sending (~40% faster) and parallel batch processing (5x throughput)
+- **Cache housekeeping**: Funding cache now expires after an hour instead of growing forever
+
+## From v2.1
 
 - **Watchlists**: Create lists of wallets to track with custom alert thresholds
 - **Leaderboard**: See which wallets are profitable after markets resolve

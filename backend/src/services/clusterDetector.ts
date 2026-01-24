@@ -8,9 +8,62 @@ import { Trade, Wallet, isMongoDBConnected } from '../db/index.js';
  * 1. Shared funding source (same CEX/bridge address)
  * 2. Synchronized trading (same market, same side, close timestamp)
  */
+
+/** Cache entry with timestamp for TTL */
+interface FundingCacheEntry {
+    fundingSource: string | null;
+    cachedAt: number;
+}
+
 export class ClusterDetector {
-    // In-memory cache of funding sources to avoid repeated lookups
-    private fundingCache = new Map<string, string | null>();
+    // In-memory cache of funding sources with TTL (1 hour)
+    private fundingCache = new Map<string, FundingCacheEntry>();
+    private readonly cacheTtlMs = 60 * 60 * 1000; // 1 hour
+    private cleanupInterval: NodeJS.Timeout | null = null;
+
+    constructor() {
+        // Start periodic cleanup (every 30 minutes)
+        this.cleanupInterval = setInterval(() => this.cleanupExpiredCache(), 30 * 60 * 1000);
+    }
+
+    /** Stop cleanup interval (for graceful shutdown) */
+    shutdown(): void {
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval);
+            this.cleanupInterval = null;
+        }
+    }
+
+    /** Remove expired entries from cache */
+    private cleanupExpiredCache(): void {
+        const now = Date.now();
+        let removed = 0;
+        for (const [key, entry] of this.fundingCache) {
+            if (now - entry.cachedAt > this.cacheTtlMs) {
+                this.fundingCache.delete(key);
+                removed++;
+            }
+        }
+        if (removed > 0) {
+            console.log(`[ClusterDetector] Cleaned up ${removed} expired cache entries`);
+        }
+    }
+
+    /** Get from cache with TTL check */
+    private getCachedFunding(address: string): string | null | undefined {
+        const entry = this.fundingCache.get(address);
+        if (!entry) return undefined;
+        if (Date.now() - entry.cachedAt > this.cacheTtlMs) {
+            this.fundingCache.delete(address);
+            return undefined;
+        }
+        return entry.fundingSource;
+    }
+
+    /** Set cache entry */
+    private setCachedFunding(address: string, fundingSource: string | null): void {
+        this.fundingCache.set(address, { fundingSource, cachedAt: Date.now() });
+    }
 
     /**
      * Analyze cluster connections for a wallet
@@ -164,7 +217,7 @@ export class ClusterDetector {
                 { address: walletAddress },
                 { $set: { fundingSource: source } }
             );
-            this.fundingCache.set(walletAddress, source);
+            this.setCachedFunding(walletAddress, source);
         } catch (error) {
             console.error('[ClusterDetector] Failed to set funding source:', error);
         }

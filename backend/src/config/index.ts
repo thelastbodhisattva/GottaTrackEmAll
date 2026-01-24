@@ -30,6 +30,10 @@ export const config = {
     // Discord
     discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || '',
 
+    // Telegram
+    telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+    telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
+
     // Thresholds
     whaleThresholdUsd: parseInt(process.env.WHALE_THRESHOLD_USD || '1000', 10),
     insiderScoreThreshold: parseInt(process.env.INSIDER_SCORE_THRESHOLD || '65', 10),

@@ -87,6 +87,7 @@ export interface EnrichedTrade {
     walletProfile: WalletProfile;
     isWhale: boolean;
     isFlagged: boolean;
+    isAnomaly?: boolean;               // High impact + fresh wallet or cluster detected
 }
 
 export interface HansonQuote {

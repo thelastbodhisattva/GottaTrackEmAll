@@ -68,6 +68,27 @@ export function createAdminRouter(
     });
 
     /**
+     * GET /api/admin/scorer-health
+     * InsiderScorer error statistics for monitoring
+     */
+    router.get('/scorer-health', (_req: Request, res: Response) => {
+        if (!insiderScorer) {
+            res.status(503).json({ error: 'InsiderScorer not available' });
+            return;
+        }
+
+        const errorStats = insiderScorer.getErrorStats();
+        const errorCounts = Object.values(errorStats) as number[];
+        const totalErrors = errorCounts.reduce((sum, val) => sum + val, 0);
+
+        res.json({
+            status: totalErrors === 0 ? 'healthy' : 'degraded',
+            totalErrors,
+            errorsByFactor: errorStats,
+            timestamp: new Date().toISOString(),
+        });
+    });
+    /**
      * GET /api/admin/flagged-wallets
      * List wallets with high insider scores
      */

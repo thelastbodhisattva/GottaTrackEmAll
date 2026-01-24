@@ -67,6 +67,7 @@ function App() {
     const [viewMode, setViewMode] = useState<ViewMode>('neutral');
     const [categoryFilter, setCategoryFilter] = useState<MarketCategory | 'all'>('all');
     const [flaggedOnly, setFlaggedOnly] = useState(false);
+    const [anomalyOnly, setAnomalyOnly] = useState(false);
     const [minSize, setMinSize] = useState(1000);
     const [activeTab, setActiveTab] = useState<TabView>('trades');
 
@@ -100,10 +101,14 @@ function App() {
         };
     }, [trades, minSize]);
 
-    // Filter trades by min size
+    // Filter trades by min size and anomaly filter
     const filteredTrades = useMemo(() => {
-        return trades.filter(t => t.sizeUsd >= minSize);
-    }, [trades, minSize]);
+        return trades.filter(t => {
+            if (t.sizeUsd < minSize) return false;
+            if (anomalyOnly && !t.isAnomaly) return false;
+            return true;
+        });
+    }, [trades, minSize, anomalyOnly]);
 
     const showEthics = viewMode === 'efficiency';
 
@@ -169,6 +174,8 @@ function App() {
                             onCategoryChange={setCategoryFilter}
                             flaggedOnly={flaggedOnly}
                             onFlaggedOnlyChange={setFlaggedOnly}
+                            anomalyOnly={anomalyOnly}
+                            onAnomalyOnlyChange={setAnomalyOnly}
                             minSize={minSize}
                             onMinSizeChange={setMinSize}
                         />

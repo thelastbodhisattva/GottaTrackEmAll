@@ -328,6 +328,13 @@ export class TradeProcessor {
         const isFlagged = insiderScore.isFlagged;
         const isWhale = trade.sizeUsd >= this.whaleThreshold;
 
+        // Anomaly detection: high impact + fresh wallet OR cluster detected
+        const breakdown = insiderScore.breakdown;
+        const isAnomaly = (
+            (breakdown.impact >= 8 && breakdown.walletAge >= 10) ||  // Price moved 10%+ AND wallet < 7 days
+            breakdown.cluster >= 20                                    // Fresh wallet cluster detected
+        );
+
         // Record metrics
         tradeCounter.inc({ category: trade.marketCategory, side: trade.side });
         if (isFlagged) {
@@ -353,20 +360,30 @@ export class TradeProcessor {
             walletProfile: finalWalletProfile,
             isWhale,
             isFlagged,
+            isAnomaly,
             fundingSource: insiderScore.fundingSource,
         };
     }
 
     /**
-     * Process multiple trades in batch
+     * Process multiple trades in batch (parallel with concurrency limit)
      */
     async processBatch(rawTrades: RawTrade[]): Promise<EnrichedTrade[]> {
+        const BATCH_CONCURRENCY = 5;
         const results: EnrichedTrade[] = [];
 
-        for (const rawTrade of rawTrades) {
-            const result = await this.process(rawTrade);
-            if (result) {
-                results.push(result);
+        // Process in parallel chunks for better throughput
+        for (let i = 0; i < rawTrades.length; i += BATCH_CONCURRENCY) {
+            const chunk = rawTrades.slice(i, i + BATCH_CONCURRENCY);
+            const chunkResults = await Promise.all(
+                chunk.map(rawTrade => this.process(rawTrade))
+            );
+
+            // Filter out nulls and add to results
+            for (const result of chunkResults) {
+                if (result) {
+                    results.push(result);
+                }
             }
         }
 
