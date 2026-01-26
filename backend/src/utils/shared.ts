@@ -151,3 +151,33 @@ export function normalizeAddress(address: string): string {
 export function isValidAddress(address: string): boolean {
     return /^0x[a-fA-F0-9]{40}$/.test(address);
 }
+
+// =============================================================================
+// Polymarket Infrastructure Constants
+// =============================================================================
+
+/**
+ * Known Polymarket exchange and infrastructure contracts.
+ * These addresses appear as maker/taker in batch orders but are NOT user wallets.
+ */
+export const POLYMARKET_EXCHANGE_ADDRESSES = [
+    // CTF Exchange
+    '0x4bfb41d5b3570de611cb87ec9182931b7140bd9d',
+    // NegRisk Exchange
+    '0xc5d563a36fe3120f2972dd43f5df1455aa8630b5',
+    // NegRisk Adapter
+    '0xd91e80cf2e7be2e162c6513ced06f1dd0da35296',
+    // NegRisk Fee Module
+    '0x78769d50be1763ed1ca0d5e878d93f05aabff29e',
+    // CTF Fee Module (often appears as tx.to)
+    '0xe3f18acc55b23a9c69a77fa1e7be3dd0f8e8048d',
+    // Polymarket Relay Hub
+    '0xd216153c06e857cd7f72665e0af1d7d82172f494',
+].map(addr => addr.toLowerCase());
+
+/**
+ * Check if an address is a known Polymarket infrastructure contract
+ */
+export function isExchangeContract(address: string): boolean {
+    return POLYMARKET_EXCHANGE_ADDRESSES.includes(address.toLowerCase());
+}

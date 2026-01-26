@@ -13,6 +13,7 @@ import { OrderFlowTracker } from './orderFlowTracker.js';
 import { PolygonRpcClient, deriveProxyAddress } from '../clients/polygonRpc.js';
 import { tradeCounter, flaggedTradeCounter } from '../middleware/metrics.js';
 import { recordTradeForVelocity } from '../cache/redis.js';
+import { isExchangeContract } from '../utils/shared.js';
 
 /**
  * Trade processor that filters, enriches, and scores whale trades
@@ -178,7 +179,13 @@ export class TradeProcessor {
             const side: TradeSide = raw.side?.toUpperCase() === 'YES' ? 'YES' : 'NO';
 
             // Use maker_address as the wallet address, fall back to taker_address
-            const walletAddress = raw.maker_address || raw.taker_address || '';
+            let walletAddress = raw.maker_address || raw.taker_address || '';
+
+            // If detected address is a known exchange/infra contract, interpret as unknown
+            // This forces the enricher to look up the REAL proxy on-chain
+            if (walletAddress && isExchangeContract(walletAddress)) {
+                walletAddress = '';
+            }
 
             // Validate timestamp - fall back to current time if invalid
             let timestamp: Date;
@@ -239,6 +246,27 @@ export class TradeProcessor {
                 if (!trade.proxyWalletAddress) {
                     trade.proxyWalletAddress = onChainResult.proxyAddress;
                     console.log(`[TradeProcessor] 📦 Using on-chain proxy: ${trade.proxyWalletAddress.slice(0, 12)}...`);
+                }
+
+                // VERIFY PROFILE: Check if the Proxy actually has a profile on Polymarket
+                // Some wallets (e.g. older proxies or specific AA wallets) might show 0 trades for the proxy
+                // while the EOA has the history.
+                if (trade.proxyWalletAddress && trade.proxyWalletAddress !== trade.walletAddress) {
+                    try {
+                        const proxyProfile = await this.profiler.getProfile(trade.proxyWalletAddress);
+                        if (!proxyProfile || proxyProfile.totalTrades === 0) {
+                            console.log(`[TradeProcessor] ⚠️ Proxy ${trade.proxyWalletAddress.slice(0, 8)} has 0 trades. Checking EOA profile...`);
+
+                            // Check EOA profile
+                            const eoaProfile = await this.profiler.getProfile(trade.walletAddress);
+                            if (eoaProfile && eoaProfile.totalTrades > 0) {
+                                console.log(`[TradeProcessor] ✅ EOA ${trade.walletAddress.slice(0, 8)} has history! Switching profile link to EOA.`);
+                                trade.proxyWalletAddress = trade.walletAddress;
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('[TradeProcessor] Failed to verify profile links:', error);
+                    }
                 }
             } else {
                 console.log(`[TradeProcessor] ⚠️ On-Chain search failed. Trying Data API fallback (Warning: Likely lagging)...`);

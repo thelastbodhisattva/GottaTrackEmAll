@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+
+## [2.2.2] - 2026-01-26
+
+Fixed the lingering profile link issues and upgraded Telegram alerts.
+
+### Fixed
+
+- **Profile Link Verification**: Some wallets (like Kernel/ZeroDev) show up as proxies but have 0 trades on their profile page. We now verify the proxy profile first. If it's empty, we automatically failover to the EOA (owner) profile. No more dead links.
+- **Exchange Contract Filtering**: Stopped the bot from confusing the CTF Exchange or Relay contracts with user wallets.
+
+### Changed
+
+- **Telegram Alerts**: Now includes both the clickable **Polymarket Profile** (Proxy) and **Polygonscan** (EOA) links so you can investigate both layers immediately.
+
 ## [2.2.1] - 2026-01-26
 
 Fixed the things that were actually broken. Profile links (hopefully)work now, and the duplicate alerts are gone.

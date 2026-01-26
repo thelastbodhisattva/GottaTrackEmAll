@@ -148,9 +148,19 @@ export class AlertService {
             ``,
             `💰 *$${trade.sizeUsd.toLocaleString()}* ${trade.side} @ ${(trade.price * 100).toFixed(1)}%`,
             `📊 ${trade.marketTitle.slice(0, 50)}${trade.marketTitle.length > 50 ? '...' : ''}`,
-            `👛 \`${walletShort}\``,
             `🏷️ ${trade.marketCategory.toUpperCase()}`,
         ];
+
+        // Add wallet links
+        const proxyAddr = trade.proxyWalletAddress || trade.walletAddress;
+        if (proxyAddr && proxyAddr !== 'Unknown') {
+            lines.push(`👤 [Polymarket Profile](https://polymarket.com/profile/${proxyAddr})`);
+        }
+
+        if (trade.walletAddress && trade.walletAddress !== 'Unknown') {
+            const shortEoa = `${trade.walletAddress.slice(0, 6)}...${trade.walletAddress.slice(-4)}`;
+            lines.push(`🔑 EOA: [${shortEoa}](https://polygonscan.com/address/${trade.walletAddress})`);
+        }
 
         if (isFlagged) {
             lines.push(`🔍 *Insider Score: ${score}/100*`);

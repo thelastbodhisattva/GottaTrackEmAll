@@ -85,14 +85,12 @@ You'll need MongoDB and Redis running locally, or point to remote instances via 
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token (get from @BotFather) | Optional |
 | `TELEGRAM_CHAT_ID` | Telegram chat/group ID | Optional |
 
-## Latest Updates (v2.2.1)
+## Latest Updates (v2.2.2)
 
-- **Reliable profile links**: Fixed the logic to properly identify the real trader (Maker vs Taker). No more links to the Relayer or Fee contract.
-- **Duplicate suppression**: Content-based hashing prevents double alerts for the same trade.
-- **Telegram alerts**: Alerts now post to both Discord and Telegram in parallel.
-- **Anomaly filter**: Toggle to show only high-impact trades from fresh wallets or cluster activity.
-- **Scorer health**: New endpoint to check if your API keys are burnt out.
-- **Performance**: Parallel alert sending (~40% faster) and better batch processing.
+- **Smart Profile Resolution**: Automatically detects if a wallet is a Proxy, Kernel, or EOA and links to the one that actually has the trade history. No more 404s.
+- **Enhanced Telegram Alerts**: Alerts now give you direct links to both the Polymarket profile and the on-chain EOA for deep diving.
+- **Reliability Fixes**: Solved race conditions in wallet tracking and duplicate trade alerts.
+- **Scorer Health**: New endpoint to check if your API keys are alive.
 
 ## From v2.1
 
