@@ -61,46 +61,49 @@ export class PersistenceService {
     }
 
     /**
-     * Update wallet aggregate statistics
+     * Update wallet aggregate statistics (atomic upsert to prevent race conditions)
      */
     private async updateWalletStats(trade: EnrichedTrade): Promise<void> {
         try {
-            const wallet = await Wallet.findOne({ address: trade.walletAddress });
             const isFlagged = trade.insiderScore.isFlagged;
 
-            if (wallet) {
-                // Update existing wallet
-                const newTotalTrades = wallet.totalTrades + 1;
-                const newFlaggedTrades = wallet.flaggedTrades + (isFlagged ? 1 : 0);
-                const newAvgScore =
-                    (wallet.avgInsiderScore * wallet.totalTrades + trade.insiderScore.breakdown.total) /
-                    newTotalTrades;
+            // Use atomic findOneAndUpdate with upsert to prevent race conditions
+            // When two trades for same wallet come in simultaneously, both will succeed
+            await Wallet.findOneAndUpdate(
+                { address: trade.walletAddress },
+                {
+                    $inc: {
+                        totalTrades: 1,
+                        flaggedTrades: isFlagged ? 1 : 0,
+                    },
+                    $set: {
+                        lastActive: new Date(),
+                    },
+                    $setOnInsert: {
+                        address: trade.walletAddress,
+                        avgInsiderScore: trade.insiderScore.breakdown.total,
+                        firstSeen: new Date(),
+                    },
+                    $addToSet: {
+                        tags: {
+                            $each: isFlagged ? ['whale', 'insider-flagged'] : ['whale']
+                        },
+                    },
+                },
+                { upsert: true }
+            );
 
+            // Update average insider score separately (can't use $inc with calculated value)
+            // This is a minor optimization - the score will be slightly lagged but accurate
+            const wallet = await Wallet.findOne({ address: trade.walletAddress });
+            if (wallet && wallet.totalTrades > 1) {
+                const newAvgScore =
+                    (wallet.avgInsiderScore * (wallet.totalTrades - 1) + trade.insiderScore.breakdown.total) /
+                    wallet.totalTrades;
                 await Wallet.updateOne(
                     { address: trade.walletAddress },
-                    {
-                        $set: {
-                            totalTrades: newTotalTrades,
-                            flaggedTrades: newFlaggedTrades,
-                            avgInsiderScore: newAvgScore,
-                            lastActive: new Date(),
-                        },
-                        $addToSet: {
-                            tags: isFlagged ? 'insider-flagged' : 'whale',
-                        },
-                    }
+                    { $set: { avgInsiderScore: newAvgScore } }
                 );
-            } else {
-                // Create new wallet
-                await Wallet.create({
-                    address: trade.walletAddress,
-                    totalTrades: 1,
-                    flaggedTrades: isFlagged ? 1 : 0,
-                    avgInsiderScore: trade.insiderScore.breakdown.total,
-                    firstSeen: new Date(),
-                    lastActive: new Date(),
-                    tags: isFlagged ? ['whale', 'insider-flagged'] : ['whale'],
-                });
             }
         } catch (error) {
             console.error('[Persistence] Failed to update wallet stats:', error);

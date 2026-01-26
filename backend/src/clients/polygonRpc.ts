@@ -10,11 +10,41 @@ const EXCHANGE_ADDRESSES = [
 ];
 
 /**
+ * Polymarket Proxy Constants (for deriving profile wallet from EOA)
+ * Used to generate Polymarket profile links when we have the EOA but not the proxy
+ */
+const PROXY_FACTORY = '0xaB45c5A4B0c941a2F231C04C3f49182e1A254052';
+const PROXY_INIT_CODE_HASH = '0xd21df8dc65880a8606f09fe0ce3df9b8869287ab0b058be05aa9e8af6330a00b';
+
+/**
  * OrderFilled Event ABI for decoding transaction logs
  */
 const ORDER_FILLED_EVENT_ABI = [
     'event OrderFilled(bytes32 indexed orderHash, address indexed maker, address indexed taker, uint256 makerAssetId, uint256 takerAssetId, uint256 makerAmountFilled, uint256 takerAmountFilled, uint256 fee)'
 ];
+
+/**
+ * Derive Polymarket proxy wallet address from EOA using CREATE2
+ * This is the address used for Polymarket profile links: https://polymarket.com/profile/{proxyAddress}
+ * 
+ * @param eoaAddress - The externally owned account (user's actual wallet)
+ * @returns The deterministic proxy wallet address for this EOA
+ */
+export function deriveProxyAddress(eoaAddress: string): string {
+    // Salt = keccak256(abi.encodePacked(address))
+    const salt = ethers.keccak256(ethers.solidityPacked(['address'], [eoaAddress]));
+
+    // CREATE2 address = keccak256(0xff ++ factory ++ salt ++ initCodeHash)[12:]
+    const create2Hash = ethers.keccak256(
+        ethers.solidityPacked(
+            ['bytes1', 'address', 'bytes32', 'bytes32'],
+            ['0xff', PROXY_FACTORY, salt, PROXY_INIT_CODE_HASH]
+        )
+    );
+
+    // Take last 20 bytes as address
+    return ethers.getAddress('0x' + create2Hash.slice(-40));
+}
 
 /**
  * Rate limiting configuration for Alchemy Free Tier
@@ -116,97 +146,218 @@ export class PolygonRpcClient {
     }
 
     /**
-     * Find a recent trade on-chain by asset ID using Alchemy's getAssetTransfers
-     * Queries ERC-1155 transfers to CTF Exchange contracts
+     * Get transaction details including both EOA (tx.from) and proxy (tx.to)
+     * When an EOA submits a Polymarket trade, tx.to is their Safe proxy wallet
      * 
-     * @param assetId - The token ID (asset_id) from the trade
-     * @param approximateSize - The approximate trade size in shares
-     * @param blockRange - How many recent blocks to search (default 200)
-     * @returns The EOA that made the trade, or null if not found
+     * @param txHash - The Polygon transaction hash
+     * @returns Object with EOA and proxy addresses, or null if not found
      */
-    async findRecentTradeEoa(assetId: string, approximateSize: number, _blockRange: number = 200): Promise<string | null> {
-        if (!this.provider || !this.isAlchemy) {
+    async getTransactionDetails(txHash: string): Promise<{ eoa: string; proxy: string } | null> {
+        if (!this.provider) {
+            return null;
+        }
+
+        // Skip if not a valid tx hash
+        if (!txHash || !txHash.startsWith('0x') || txHash.length !== 66) {
             return null;
         }
 
         try {
             await this.rateLimit();
 
-            console.log(`[PolygonRpc] 🔗 Querying Alchemy for ERC-1155 transfers to CTF Exchange...`);
+            const tx = await this.provider.getTransaction(txHash);
+            if (tx && tx.from && tx.to) {
+                const eoa = tx.from.toLowerCase();
+                const proxy = tx.to.toLowerCase();
+                return { eoa, proxy };
+            }
 
-            // Query ERC-1155 transfers TO the CTF Exchange contract
-            const response = await fetch(this.provider._getConnection().url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    jsonrpc: '2.0',
-                    id: 1,
-                    method: 'alchemy_getAssetTransfers',
-                    params: [{
-                        fromBlock: 'latest',  // Most recent blocks
-                        toBlock: 'latest',
-                        toAddress: EXCHANGE_ADDRESSES[0], // CTF Exchange
-                        category: ['erc1155'],
-                        withMetadata: true,
-                        maxCount: '0x14', // 20 transfers
-                    }],
-                }),
-            });
+            return null;
+        } catch (error) {
+            console.error(`[PolygonRpc] Error getting tx details:`, error);
+            return null;
+        }
+    }
 
-            const data = await response.json() as any;
+    /**
+     * Find a recent trade on-chain by asset ID using Alchemy's getAssetTransfers
+     * Queries ERC-1155 transfers to CTF Exchange contracts
+     * 
+     * @param assetId - The token ID (asset_id) from the trade
+     * @param approximateSize - The approximate trade size in shares
+     * @param blockRange - How many recent blocks to search (default 200)
+     * @returns Object with EOA and proxy address, or null if not found
+     */
+    async findRecentTradeWithProxy(assetId: string, approximateSize: number, blockRange: number = 50): Promise<{ eoa: string; proxyAddress: string } | null> {
+        if (!this.provider) {
+            return null;
+        }
 
-            if (data.result?.transfers?.length > 0) {
-                console.log(`[PolygonRpc] Found ${data.result.transfers.length} recent ERC-1155 transfers to CTF Exchange`);
+        try {
+            await this.rateLimit();
 
-                // Look for a transfer with matching token ID
-                for (const transfer of data.result.transfers) {
-                    // Check if this transfer matches our asset ID
-                    const tokenId = transfer.erc1155Metadata?.[0]?.tokenId;
-                    const fromAddress = transfer.from?.toLowerCase();
-                    const txHash = transfer.hash;
+            // Infrastructure contracts to EXCLUDE from being identified as user wallets
+            // These are used for logs searching but should NOT be selected as taker/maker
+            const ALL_EXCHANGE_ADDRESSES = [
+                ...EXCHANGE_ADDRESSES,
+                '0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296'.toLowerCase(), // NegRisk Adapter
+                '0x78769D50Be1763ed1CA0D5E878D93f05aabff29e'.toLowerCase(), // NegRisk Fee Module
+                '0xe3f18acc55b23a9c69a77fa1e7be3dd0f8e8048d'.toLowerCase(), // CTF Fee Module (from tx.to)
+                '0xD216153c06E857cD7f72665E0aF1d7D82172F494'.toLowerCase(), // Polymarket Relay Hub
+            ];
 
-                    // Token ID match (fuzzy - asset IDs can be very long)
-                    if (tokenId && assetId && (tokenId.includes(assetId.slice(-10)) || assetId.includes(tokenId.slice(-10)))) {
-                        console.log(`[PolygonRpc] ✅ Found matching ERC-1155 transfer! From: ${fromAddress?.slice(0, 10)}...`);
+            // RETRY LOOP: On-Chain settlement always lags behind WebSocket off-chain match.
+            // We wait up to 30 seconds (6 attempts * 5s) for the block to be mined.
+            const MAX_RETRIES = 6;
+            const RETRY_DELAY_MS = 5000;
+            const VOLUME_THRESHOLD_PERCENT = 0.01; // 1% threshold to filter unrelated noise/dust
 
-                        // Get EOA from transaction
-                        if (txHash) {
-                            await this.rateLimit();
-                            const tx = await this.provider.getTransaction(txHash);
-                            if (tx?.from) {
-                                const eoa = tx.from.toLowerCase();
-                                console.log(`[PolygonRpc] ✅ Got EOA from ERC-1155 transfer: ${eoa.slice(0, 10)}...`);
-                                return eoa;
+            // Heuristic threshold: if found volume is < 1% of expected, it's likely noise or partial fill
+            const targetVolumeThreshold = BigInt(Math.floor(approximateSize * VOLUME_THRESHOLD_PERCENT * 1000));
+
+            for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                // Refresh block number on each attempt to catch new blocks
+                const currentBlockNow = await this.provider.getBlockNumber();
+                const startBlockNow = currentBlockNow - blockRange;
+
+                console.log(`[PolygonRpc] 🔄 Attempt ${attempt}/${MAX_RETRIES}: Scanning logs from ${startBlockNow} to ${currentBlockNow} for asset ${assetId}...`);
+
+                // Get OrderFilled topic
+                const orderFilledTopic = this.iface.getEvent("OrderFilled")?.topicHash;
+                if (!orderFilledTopic) {
+                    return null;
+                }
+
+                const CHUNK_SIZE = 10;
+                const targetAssetIdBigInt = BigInt(assetId);
+
+                // Track volumes by Taker address
+                const takerVolumes = new Map<string, bigint>();
+                const takerLatestTx = new Map<string, string>();
+
+                // Chunk the queries from NEWEST to OLDEST (10 blocks at a time)
+                for (let toBlock = currentBlockNow; toBlock > startBlockNow; toBlock -= CHUNK_SIZE) {
+                    const fromBlock = Math.max(toBlock - CHUNK_SIZE + 1, startBlockNow);
+
+                    await this.rateLimit();
+
+                    try {
+                        const logs = await this.provider.getLogs({
+                            fromBlock: fromBlock,
+                            toBlock: toBlock,
+                            address: ALL_EXCHANGE_ADDRESSES,
+                            topics: [orderFilledTopic]
+                        });
+
+                        for (const log of logs) {
+                            try {
+                                const parsed = this.iface.parseLog({
+                                    topics: log.topics as string[],
+                                    data: log.data
+                                });
+
+                                if (parsed && parsed.name === 'OrderFilled') {
+                                    const makerAssetId = BigInt(parsed.args.makerAssetId);
+                                    const takerAssetId = BigInt(parsed.args.takerAssetId);
+                                    const maker = parsed.args.maker.toLowerCase();
+                                    const taker = parsed.args.taker.toLowerCase();
+
+                                    // Identify who is dealing with the target asset (shares)
+                                    // makerAssetId = what MAKER provides | takerAssetId = what TAKER provides
+                                    // If makerAssetId matches → MAKER is providing shares → TAKER buys
+                                    // If takerAssetId matches → TAKER is providing shares → MAKER buys
+
+                                    let traderProxy = '';
+                                    let matchVolume = 0n;
+
+                                    if (makerAssetId === targetAssetIdBigInt) {
+                                        // MAKER provides shares → MAKER holds these shares (whale could be MAKER)
+                                        matchVolume = BigInt(parsed.args.makerAmountFilled);
+                                        traderProxy = maker; // Track MAKER (limit order placer who had shares)
+                                    } else if (takerAssetId === targetAssetIdBigInt) {
+                                        // TAKER provides shares → TAKER holds these shares (whale could be TAKER)
+                                        matchVolume = BigInt(parsed.args.takerAmountFilled);
+                                        traderProxy = taker; // Track TAKER (market order placer who had shares)
+                                    }
+
+                                    if (matchVolume > 0n && traderProxy) {
+                                        // CRITICAL: Skip infrastructure contracts - only track real user proxies
+                                        if (!ALL_EXCHANGE_ADDRESSES.includes(traderProxy)) {
+                                            takerVolumes.set(traderProxy, (takerVolumes.get(traderProxy) || 0n) + matchVolume);
+                                            takerLatestTx.set(traderProxy, log.transactionHash);
+                                        }
+                                    }
+                                }
+                            } catch (e) {
+                                continue;
                             }
                         }
-
-                        // Fallback: use the from address directly
-                        if (fromAddress) {
-                            return fromAddress;
-                        }
+                    } catch (chunkError: any) {
+                        console.warn(`[PolygonRpc] Error fetching chunk ${fromBlock}-${toBlock}: ${chunkError.message}`);
                     }
                 }
 
-                // If no exact match, return the most recent transfer's sender
-                // This is a best-effort fallback for whale trades
-                const mostRecent = data.result.transfers[0];
-                if (mostRecent?.hash) {
-                    await this.rateLimit();
-                    const tx = await this.provider.getTransaction(mostRecent.hash);
-                    if (tx?.from) {
-                        const eoa = tx.from.toLowerCase();
-                        console.log(`[PolygonRpc] ⚡ Using most recent CTF trade EOA: ${eoa.slice(0, 10)}...`);
-                        return eoa;
+                // Find the Taker with the LARGEST volume
+                let maxVolume = 0n;
+                let maxTaker = '';
+
+                for (const [taker, volume] of takerVolumes.entries()) {
+                    if (volume > maxVolume) {
+                        maxVolume = volume;
+                        maxTaker = taker;
                     }
+                }
+
+                console.log(`[PolygonRpc] 📊 Max Volume Found: ${maxVolume.toString()}`);
+
+                if (maxTaker && maxVolume >= targetVolumeThreshold) {
+                    const txHash = takerLatestTx.get(maxTaker)!;
+                    console.log(`[PolygonRpc] ✅ FOUND MATCHING TRADER (Settled)!`);
+                    console.log(`[PolygonRpc] 🔗 Tx: ${txHash}`);
+
+                    // CRITICAL FIX: The taker from OrderFilled IS the user's proxy wallet
+                    // tx.from = Polymarket Relayer (NOT user EOA) - WRONG
+                    // tx.to = Fee Module contract (NOT user proxy) - WRONG
+                    // The TAKER address IS the correct Polymarket profile address
+
+                    // Check if maxTaker is an Exchange/infrastructure contract (shouldn't be, but verify)
+                    if (ALL_EXCHANGE_ADDRESSES.includes(maxTaker)) {
+                        console.warn(`[PolygonRpc] ⚠️ Max taker is Exchange contract, continuing search...`);
+                        // Don't return, continue to next retry attempt
+                    } else {
+                        // The taker IS the user's proxy wallet (this is correct!)
+                        console.log(`[PolygonRpc] 🏆 User Proxy (OrderFilled taker): ${maxTaker.slice(0, 10)}...`);
+
+                        // Try to resolve proxy to EOA owner, but proxy is what matters for profile links
+                        const resolvedEoa = await this.resolveProxyToEoa(maxTaker);
+                        const eoa = resolvedEoa || maxTaker;
+
+                        console.log(`[PolygonRpc] 🔑 EOA: ${eoa.slice(0, 10)}... (resolved: ${!!resolvedEoa})`);
+                        return { eoa, proxyAddress: maxTaker };
+                    }
+                }
+
+                if (attempt < MAX_RETRIES) {
+                    console.log(`[PolygonRpc] ⏳ Waiting ${RETRY_DELAY_MS}ms for settlement...`);
+                    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
                 }
             }
 
-            console.log(`[PolygonRpc] No matching on-chain trade found`);
+            console.log(`[PolygonRpc] No matching settled trade found after ${MAX_RETRIES} attempts`);
             return null;
         } catch (error) {
-            console.error(`[PolygonRpc] Error searching on-chain trades:`, error);
+            console.error(`[PolygonRpc] Error searching on-chain logs:`, error);
             return null;
         }
+    }
+
+    /**
+     * Find a recent trade on-chain by asset ID (returns only EOA for backward compatibility)
+     * @deprecated Use findRecentTradeWithProxy for complete proxy information
+     */
+    async findRecentTradeEoa(assetId: string, approximateSize: number, blockRange: number = 200): Promise<string | null> {
+        const result = await this.findRecentTradeWithProxy(assetId, approximateSize, blockRange);
+        return result?.eoa || null;
     }
 
     /**
@@ -730,33 +881,20 @@ export class PolygonRpcClient {
         '0x1111111254fb6c44bac0bed2854e76f90643097d': '1inch V5',
         '0xdef171fe48cf0115b1d80b88dc8eab59176fee57': 'Paraswap',
         '0x6131b5fae19ea4f9d964eac0408e4408b66337b5': 'Kyberswap',
-        '0xa5e0829caced8ffdd4de3c43696c57f7d7a678ff': 'Quickswap',
-        '0xf5b509bb0909a69b1c207e495f687a596c168e12': 'SushiSwap',
-        '0x3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad': 'Uniswap Universal',
     };
 
     /**
-     * Detect the funding source of a wallet via Alchemy
-     * Returns: { type: 'exchange'|'bridge'|'contract'|'unknown', label: string }
+     * Detect the funding source of a wallet (Exchange, Bridge, etc.)
+     * Used for On-Chain Source scoring factor
      */
     async detectFundingSource(address: string): Promise<{ type: string; label: string } | null> {
-        if (!this.provider) {
-            return null;
-        }
-
-        if (!address || !address.startsWith('0x') || address === 'Unknown') {
-            return null;
-        }
-
-        // Feature requires Alchemy checks
-        if (!this.isAlchemy) {
-            return { type: 'unknown', label: 'Unknown (No Alchemy Key)' };
-        }
+        if (!this.provider || !address) return null;
 
         try {
             await this.rateLimit();
 
-            // Get first few incoming transfers to this wallet
+            // Check if we have cached funding source? (Not implemented, but good idea)
+            // For now, check the FIRST incoming transaction
             const response = await fetch(this.provider._getConnection().url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -769,7 +907,7 @@ export class PolygonRpcClient {
                         toBlock: 'latest',
                         toAddress: address,
                         category: ['external', 'erc20'],
-                        maxCount: '0xa', // Get first 10 incoming txs (0xa = 10)
+                        maxCount: '0x1', // First tx ever
                         order: 'asc',
                     }],
                 }),
@@ -778,65 +916,36 @@ export class PolygonRpcClient {
             const data = await response.json() as any;
 
             if (data.result?.transfers?.length > 0) {
-                // Track funding source candidates
-                let firstContract: string | null = null;
-                let firstEoa: string | null = null;
+                const firstTx = data.result.transfers[0];
+                const funder = firstTx.from?.toLowerCase();
 
-                for (const tx of data.result.transfers) {
-                    const fromAddress = tx.from?.toLowerCase();
+                if (funder) {
+                    console.log(`[PolygonRpc] Contract funding detected from ${funder.slice(0, 10)}...`);
 
-                    if (!fromAddress) continue;
-
-                    // 1. Check CEX (Priority 1)
-                    if (this.CEX_ADDRESSES[fromAddress]) {
-                        const label = this.CEX_ADDRESSES[fromAddress];
-                        console.log(`[PolygonRpc] CEX funding detected: ${label} -> ${address.slice(0, 10)}...`);
-                        return { type: 'exchange', label };
+                    // Check CEX
+                    if (this.CEX_ADDRESSES[funder]) {
+                        return { type: 'exchange', label: this.CEX_ADDRESSES[funder] };
                     }
 
-                    // 2. Check Bridge (Priority 2)
-                    if (this.BRIDGE_ADDRESSES[fromAddress]) {
-                        const label = this.BRIDGE_ADDRESSES[fromAddress];
-                        console.log(`[PolygonRpc] Bridge funding detected: ${label} -> ${address.slice(0, 10)}...`);
-                        return { type: 'bridge', label };
+                    // Check Bridges
+                    if (this.BRIDGE_ADDRESSES[funder]) {
+                        return { type: 'bridge', label: this.BRIDGE_ADDRESSES[funder] };
                     }
 
-                    // 3. Check DEX (Priority 3)
-                    if (this.DEX_ADDRESSES[fromAddress]) {
-                        const label = this.DEX_ADDRESSES[fromAddress];
-                        console.log(`[PolygonRpc] DEX funding detected: ${label} -> ${address.slice(0, 10)}...`);
-                        return { type: 'contract', label };
+                    // Check DEX (less likely for initial funding but possible)
+                    if (this.DEX_ADDRESSES[funder]) {
+                        return { type: 'contract', label: this.DEX_ADDRESSES[funder] };
                     }
 
-                    // 4. Check Generic Contract
-                    if (!firstContract) {
-                        await this.rateLimit();
-                        const code = await this.provider.getCode(fromAddress);
-                        if (code && code !== '0x') {
-                            firstContract = fromAddress;
-                            // Keep searching for a known CEX/Bridge in history, 
-                            // but remember this contract as a fallback
-                        } else if (!firstEoa) {
-                            firstEoa = fromAddress;
-                        }
+                    // Check if funder is a contract
+                    await this.rateLimit();
+                    const code = await this.provider.getCode(funder);
+                    if (code !== '0x' && code !== '0x0') {
+                        return { type: 'contract', label: 'Unknown Contract' };
                     }
-                }
-
-                // If no known CEX/Bridge found, return best guess
-                if (firstContract) {
-                    console.log(`[PolygonRpc] Contract funding detected from ${firstContract.slice(0, 10)}...`);
-                    return { type: 'contract', label: 'Unknown Contract' };
-                }
-
-                if (firstEoa) {
-                    // EOA funding - return truncated address
-                    const label = `${firstEoa.slice(0, 6)}...${firstEoa.slice(-4)}`;
-                    return { type: 'unknown', label: label };
                 }
             }
-
-            console.log(`[PolygonRpc] No funding source detected for ${address.slice(0, 10)}...`);
-            return { type: 'unknown', label: 'Unknown' };
+            return null;
         } catch (error) {
             console.error(`[PolygonRpc] Error detecting funding source:`, error);
             return null;

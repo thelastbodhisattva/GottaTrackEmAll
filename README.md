@@ -85,13 +85,14 @@ You'll need MongoDB and Redis running locally, or point to remote instances via 
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token (get from @BotFather) | Optional |
 | `TELEGRAM_CHAT_ID` | Telegram chat/group ID | Optional |
 
-## New in v2.2
+## Latest Updates (v2.2.1)
 
-- **Telegram alerts**: Configure with bot token and chat ID, alerts post to both Discord and Telegram in parallel
-- **Anomaly filter**: Quick toggle to show only high-impact trades from fresh wallets or cluster activity
-- **Scorer health endpoint**: `GET /api/admin/scorer-health` for monitoring scoring factor errors
-- **Performance bump**: Parallel alert sending (~40% faster) and parallel batch processing (5x throughput)
-- **Cache housekeeping**: Funding cache now expires after an hour instead of growing forever
+- **Reliable profile links**: Fixed the logic to properly identify the real trader (Maker vs Taker). No more links to the Relayer or Fee contract.
+- **Duplicate suppression**: Content-based hashing prevents double alerts for the same trade.
+- **Telegram alerts**: Alerts now post to both Discord and Telegram in parallel.
+- **Anomaly filter**: Toggle to show only high-impact trades from fresh wallets or cluster activity.
+- **Scorer health**: New endpoint to check if your API keys are burnt out.
+- **Performance**: Parallel alert sending (~40% faster) and better batch processing.
 
 ## From v2.1
 

@@ -347,6 +347,218 @@ export class MarketService {
     }
 
     /**
+     * Get a specific trade by asset (token_id) OR conditionId and size/price match
+     * Returns the proxyWallet for Polymarket profile link
+     * 
+     * The Data API returns trades with:
+     * - proxyWallet: The user's Polymarket profile address
+     * - asset: The token_id (our marketId)
+     * - conditionId: Market's unique condition ID (BEST for filtering!)
+     * - size, price: For matching the specific trade
+     */
+    async getTradeByAsset(
+        assetId: string,
+        targetSize: number,
+        targetPrice: number,
+        conditionId?: string  // Optional but HIGHLY RECOMMENDED for accurate matching
+    ): Promise<{
+        proxyWallet: string;
+        transactionHash: string;
+        size: number;
+        price: number;
+    } | null> {
+        // STRATEGY: Parallel Deep Fetch
+        // Fetch 2500 trades (5 pages x 500) concurrently to catch whale trades
+        // that get buried instantly by high-frequency crypto volume.
+        const BATCH_SIZE = 500;
+        const PARALLEL_REQUESTS = 5;
+        const TOTAL_TRADES = BATCH_SIZE * PARALLEL_REQUESTS;
+
+        try {
+            const matchInfo = conditionId
+                ? `conditionId ${conditionId.slice(0, 20)}...`
+                : `asset ${assetId.slice(0, 20)}...`;
+
+            console.log(`[MarketService] 🚀 PARALLEL FETCH: searching ${TOTAL_TRADES} trades for ${matchInfo}`);
+
+            // Create 5 parallel fetch promises
+            const fetchPromises = Array.from({ length: PARALLEL_REQUESTS }, (_, i) => {
+                const offset = i * BATCH_SIZE;
+                const url = `https://data-api.polymarket.com/trades?limit=${BATCH_SIZE}&offset=${offset}`;
+
+                return fetch(url, {
+                    headers: {
+                        'Accept': 'application/json',
+                        'User-Agent': 'PolyWhaleTracker/1.0'
+                    },
+                    signal: AbortSignal.timeout(15000)
+                })
+                    .then(res => res.ok ? res.json() : [])
+                    .catch(err => {
+                        console.warn(`[MarketService] Failed to fetch batch offset ${offset}: ${err.message}`);
+                        return [];
+                    });
+            });
+
+            // Wait for all requests
+            const results = await Promise.all(fetchPromises);
+
+            // Flatten and deduplicate
+            const allTrades = (results as any[][]).flat();
+            console.log(`[MarketService] 📥 Received ${allTrades.length} unique trades from API`);
+
+
+            // BEST STRATEGY: Filter by conditionId (unique per market!)
+            if (conditionId) {
+                const marketTrades = allTrades.filter(t => t.conditionId === conditionId);
+                console.log(`[MarketService] Found ${marketTrades.length} trades for this market`);
+
+                if (marketTrades.length > 0) {
+                    // 1. Group by proxyWallet to handle multi-fill trades
+                    // A whale buying $10k might be split into 5 trades of $2k in the API
+                    const walletVolumes = new Map<string, { totalUsd: number, totalSize: number, txHash: string, trades: any[] }>();
+
+                    for (const trade of marketTrades) {
+                        const wallet = trade.proxyWallet;
+                        if (!wallet) continue;
+
+                        const info = walletVolumes.get(wallet) || { totalUsd: 0, totalSize: 0, txHash: trade.transactionHash, trades: [] as any[] };
+                        const tradeUsd = parseFloat(trade.size) * parseFloat(trade.price);
+
+                        info.totalUsd += tradeUsd;
+                        info.totalSize += parseFloat(trade.size);
+                        info.trades.push(trade);
+                        walletVolumes.set(wallet, info);
+                    }
+
+                    console.log(`[MarketService] Found ${walletVolumes.size} unique wallets trading this market`);
+
+                    const targetUsd = targetSize * targetPrice;
+
+                    // 2. Check aggregated volumes against target
+                    for (const [wallet, info] of walletVolumes.entries()) {
+                        // Wide tolerance (20% to 500%) for aggregation differences
+                        if (info.totalUsd > targetUsd * 0.2 && info.totalUsd < targetUsd * 5) {
+                            console.log(`[MarketService] ✅ Found AGGREGATED match! Wallet: ${wallet.slice(0, 10)}... Total: $${info.totalUsd.toFixed(0)} (Target: $${targetUsd.toFixed(0)})`);
+                            return {
+                                proxyWallet: wallet,
+                                transactionHash: info.txHash,
+                                size: info.totalSize,
+                                price: info.totalUsd / info.totalSize // Average price
+                            };
+                        }
+                    }
+
+                    // 3. Fallback: Return the wallet with the LARGEST volume
+                    // If the whale swept the book, they are likely the biggest volume in the last few seconds
+                    let maxVolWallet = '';
+                    let maxVol = 0;
+
+                    for (const [wallet, info] of walletVolumes.entries()) {
+                        if (info.totalUsd > maxVol) {
+                            maxVol = info.totalUsd;
+                            maxVolWallet = wallet;
+                        }
+                    }
+
+                    if (maxVol > 0) {
+                        const targetUsd = targetSize * targetPrice;
+                        const info = walletVolumes.get(maxVolWallet)!;
+
+                        // SAFETY CHECK: Only use fallback if volume is at least 10% of target
+                        // Prevents matching a $62 trade to an $18,000 whale (which happened!)
+                        if (maxVol > targetUsd * 0.1) {
+                            console.log(`[MarketService] ✅ Using LARGEST volume wallet: ${maxVolWallet.slice(0, 10)}... Vol: $${maxVol.toFixed(0)}`);
+                            return {
+                                proxyWallet: maxVolWallet,
+                                transactionHash: info.txHash,
+                                size: info.totalSize,
+                                price: info.totalUsd / info.totalSize
+                            };
+                        } else {
+                            console.log(`[MarketService] ⚠️ Found largest wallet ${maxVolWallet.slice(0, 10)}... but volume $${maxVol.toFixed(0)} is too small (<10% of target $${targetUsd.toFixed(0)})`);
+                        }
+                    }
+                }
+            }
+
+            // FALLBACK: Exact asset ID match + size/price match
+            for (const trade of allTrades) {
+                if (trade.asset === assetId) {
+                    const size = parseFloat(trade.size);
+                    const price = parseFloat(trade.price);
+
+                    // Check if this is our trade (15% tolerance)
+                    const sizeTolerance = targetSize * 0.15;
+                    const priceTolerance = Math.max(targetPrice * 0.05, 0.01);
+
+                    if (Math.abs(size - targetSize) < sizeTolerance &&
+                        Math.abs(price - targetPrice) < priceTolerance) {
+                        console.log(`[MarketService] ✅ Found EXACT asset match! Proxy: ${trade.proxyWallet?.slice(0, 12)}...`);
+                        return {
+                            proxyWallet: trade.proxyWallet,
+                            transactionHash: trade.transactionHash,
+                            size,
+                            price
+                        };
+                    }
+                }
+            }
+
+            // Strategy 2: Fuzzy asset match (last 15 chars) + price match
+            for (const trade of allTrades) {
+                const tradeAsset = trade.asset || '';
+                const assetMatch = tradeAsset.slice(-15) === assetId.slice(-15);
+
+                if (assetMatch) {
+                    const size = parseFloat(trade.size);
+                    const targetUsd = targetSize * targetPrice;
+                    const tradeUsd = size * parseFloat(trade.price);
+
+                    // Check if USD value matches (20% tolerance)
+                    if (Math.abs(tradeUsd - targetUsd) < targetUsd * 0.2) {
+                        console.log(`[MarketService] ✅ Found fuzzy asset match! Proxy: ${trade.proxyWallet?.slice(0, 12)}...`);
+                        return {
+                            proxyWallet: trade.proxyWallet,
+                            transactionHash: trade.transactionHash,
+                            size,
+                            price: parseFloat(trade.price)
+                        };
+                    }
+                }
+            }
+
+            // Strategy 3: Large USD value match only (for true whale trades $10k+)
+            // This is risky but better than no profile for major trades
+            const targetUsd = targetSize * targetPrice;
+            if (targetUsd >= 10000) { // Only for $10k+ trades
+                for (const trade of allTrades) {
+                    const size = parseFloat(trade.size);
+                    const price = parseFloat(trade.price);
+                    const tradeUsd = size * price;
+
+                    // Very tight USD match (5%) for large trades
+                    if (Math.abs(tradeUsd - targetUsd) < targetUsd * 0.05) {
+                        console.log(`[MarketService] ✅ Found large USD match ($${tradeUsd.toFixed(0)})! Proxy: ${trade.proxyWallet?.slice(0, 12)}...`);
+                        return {
+                            proxyWallet: trade.proxyWallet,
+                            transactionHash: trade.transactionHash,
+                            size,
+                            price
+                        };
+                    }
+                }
+            }
+
+            console.log(`[MarketService] No matching trade found in ${allTrades.length} recent trades`);
+            return null;
+        } catch (error) {
+            console.error(`[MarketService] Error fetching trade by asset:`, error);
+            return null;
+        }
+    }
+
+    /**
      * Classify market into category based on keywords
      */
     private classifyMarket(title: string, description: string): MarketCategory {

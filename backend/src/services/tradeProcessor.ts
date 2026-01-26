@@ -10,7 +10,7 @@ import { InsiderScorer } from './insiderScorer.js';
 import { WalletProfiler } from './walletProfiler.js';
 import { MarketService } from './marketService.js';
 import { OrderFlowTracker } from './orderFlowTracker.js';
-import { PolygonRpcClient } from '../clients/polygonRpc.js';
+import { PolygonRpcClient, deriveProxyAddress } from '../clients/polygonRpc.js';
 import { tradeCounter, flaggedTradeCounter } from '../middleware/metrics.js';
 import { recordTradeForVelocity } from '../cache/redis.js';
 
@@ -22,7 +22,10 @@ export class TradeProcessor {
 
     // Replay protection: track recently processed trade IDs
     private processedTradeIds = new Map<string, number>(); // tradeId -> timestamp
+    // Content-based deduplication: same trade can have different IDs
+    private processedTradeHashes = new Map<string, number>(); // contentHash -> timestamp
     private readonly replayWindowMs = 60 * 60 * 1000; // 1 hour window
+    private readonly contentDedupWindowMs = 5 * 60 * 1000; // 5 minute window for content dedup
     private replayCleanupInterval: ReturnType<typeof setInterval>;
 
     constructor(
@@ -54,8 +57,17 @@ export class TradeProcessor {
             }
         }
 
-        if (cleaned > 0) {
-            console.log(`[TradeProcessor] Cleaned up ${cleaned} old trade IDs, ${this.processedTradeIds.size} remaining`);
+        // Also clean up content hashes
+        let hashCleaned = 0;
+        for (const [hash, timestamp] of this.processedTradeHashes) {
+            if (now - timestamp > this.contentDedupWindowMs) {
+                this.processedTradeHashes.delete(hash);
+                hashCleaned++;
+            }
+        }
+
+        if (cleaned > 0 || hashCleaned > 0) {
+            console.log(`[TradeProcessor] Cleaned up ${cleaned} trade IDs, ${hashCleaned} content hashes`);
         }
     }
 
@@ -84,17 +96,46 @@ export class TradeProcessor {
     }
 
     /**
+     * Create a content hash for deduplication
+     * Same trade can arrive with different IDs but same content
+     */
+    private createContentHash(raw: RawTrade): string {
+        // Round size to 2 decimals to handle minor floating point differences
+        const sizeRounded = Math.round(parseFloat(raw.size) * 100);
+        const priceRounded = Math.round(parseFloat(raw.price) * 10000);
+        return `${raw.asset_id}_${sizeRounded}_${priceRounded}_${raw.side}`;
+    }
+
+    /**
+     * Check if content hash is a duplicate, return true if NEW (not duplicate)
+     */
+    private tryMarkContentHash(hash: string): boolean {
+        if (this.processedTradeHashes.has(hash)) {
+            return false; // Duplicate content
+        }
+        this.processedTradeHashes.set(hash, Date.now());
+        return true;
+    }
+
+    /**
      * Process a raw trade from WebSocket
      * Returns enriched trade if it meets whale threshold, null otherwise
      */
     async process(rawTrade: RawTrade): Promise<EnrichedTrade | null> {
+        // FIRST: Content-based deduplication (catches same trade with different IDs)
+        const contentHash = this.createContentHash(rawTrade);
+        if (!this.tryMarkContentHash(contentHash)) {
+            // Silent skip for content duplicates (very common)
+            return null;
+        }
+
         // Parse raw trade
         const trade = this.parseRawTrade(rawTrade);
         if (!trade) {
             return null;
         }
 
-        // Atomic replay protection: skip if already processed
+        // Atomic replay protection: skip if already processed by ID
         // This combines check + set into one operation to prevent race conditions
         if (!this.tryMarkAsProcessed(trade.id)) {
             return null;
@@ -184,114 +225,85 @@ export class TradeProcessor {
         if (!trade.walletAddress && this.polygonRpc) {
             console.log(`[TradeProcessor] Wallet address missing for trade ${trade.id}, fetching...`);
 
-            // Try to get txHash from Data API if we don't have it
-            let txHash = trade.transactionHash;
-            let proxyWallet: string | null = null;
+            // STRATEGY: ON-CHAIN FIRST (Real-time truth)
+            // Data API is lagging by ~3 hours, so we MUST check blockchain first.
 
-            if (!txHash) {
-                const recentTrades = await this.marketService.getRecentTrades(trade.marketId, 10);
+            console.log(`[TradeProcessor] 🔗 Searching on-chain for trade...`);
+            // Scan last 50 blocks (~2 mins)
+            const onChainResult = await this.polygonRpc.findRecentTradeWithProxy(trade.marketId, trade.shares, 50);
 
-                // Log what we got for debugging
-                console.log(`[TradeProcessor] Looking for trade: size=${trade.shares}, price=${trade.price}`);
+            if (onChainResult) {
+                console.log(`[TradeProcessor] ✅ Got REAL EOA from On-Chain: ${onChainResult.eoa.slice(0, 12)}..., Proxy: ${onChainResult.proxyAddress.slice(0, 12)}...`);
+                trade.walletAddress = onChainResult.eoa;
 
-                // Find a trade matching our size/price with percentage tolerance
-                for (const apiTrade of recentTrades) {
-                    const t = apiTrade as any;
-                    const apiSize = parseFloat(t.size);
-                    const apiPrice = parseFloat(t.price);
-
-                    // Use 10% tolerance for size matching and 5% for price
-                    const sizeTolerance = trade.shares * 0.1;
-                    const priceTolerance = Math.max(trade.price * 0.05, 0.01);
-
-                    const sizeMatch = Math.abs(apiSize - trade.shares) < sizeTolerance;
-                    const priceMatch = Math.abs(apiPrice - trade.price) < priceTolerance;
-
-                    // Check both camelCase and snake_case field names
-                    const apiTxHash = t.transactionHash || t.transaction_hash;
-                    const apiProxyWallet = t.proxyWallet || t.proxy_wallet || t.maker_address || t.taker_address;
-
-                    if (sizeMatch && priceMatch && apiTxHash) {
-                        txHash = apiTxHash;
-                        proxyWallet = apiProxyWallet || null;
-                        console.log(`[TradeProcessor] ✅ Matched trade: API size=${apiSize}, price=${apiPrice}`);
-                        break;
-                    }
+                if (!trade.proxyWalletAddress) {
+                    trade.proxyWalletAddress = onChainResult.proxyAddress;
+                    console.log(`[TradeProcessor] 📦 Using on-chain proxy: ${trade.proxyWalletAddress.slice(0, 12)}...`);
                 }
+            } else {
+                console.log(`[TradeProcessor] ⚠️ On-Chain search failed. Trying Data API fallback (Warning: Likely lagging)...`);
 
-                // Fallback: If no match found, use the most recent API trade with a txHash
-                if (!txHash && recentTrades.length > 0) {
-                    // Find the first trade with a transactionHash
-                    for (const apiTrade of recentTrades) {
-                        const t = apiTrade as any;
-                        const apiTxHash = t.transactionHash || t.transaction_hash;
-                        if (apiTxHash) {
-                            txHash = apiTxHash;
-                            proxyWallet = t.proxyWallet || t.proxy_wallet || t.maker_address || t.taker_address || null;
-                            console.log(`[TradeProcessor] ⚡ Using txHash from API trade: ${txHash.slice(0, 12)}...`);
-                            break;
+                // FALLBACK: Data API (Likely stale, but better than nothing?)
+                // ... [Existing Data API logic mostly as backup, or maybe skip it to avoid false positives?]
+                // Let's keep it but with strict checks
+
+                // Try to get txHash from Data API if we don't have it
+                let txHash = trade.transactionHash;
+                let proxyWallet: string | null = null;
+
+                if (!txHash) {
+                    // WAIT for API indexing: Data API lags behind WebSocket by 2-5 seconds (or hours...)
+                    console.log(`[TradeProcessor] ⏳ Waiting 3s for Data API indexing...`);
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+
+                    const ourUsdValue = trade.shares * trade.price;
+
+                    // FIRST: Try to get market info to get conditionId for better matching
+                    let conditionId: string | undefined;
+                    try {
+                        const market = await this.marketService.getMarket(trade.marketId);
+                        if (market?.conditionId) {
+                            conditionId = market.conditionId;
+                            console.log(`[TradeProcessor] Got market conditionId: ${conditionId.slice(0, 20)}...`);
+                        }
+                    } catch (err) {
+                        // Market lookup failed, proceed without conditionId
+                    }
+
+                    console.log(`[TradeProcessor] Looking for fallback trade: asset=${trade.marketId.slice(0, 20)}..., shares=${trade.shares.toFixed(0)}, USD=$${ourUsdValue.toFixed(0)}`);
+
+                    // Match by conditionId (best) or asset (fallback)
+                    const matchedTrade = await this.marketService.getTradeByAsset(
+                        trade.marketId,
+                        trade.shares,
+                        trade.price,
+                        conditionId  // Pass conditionId for accurate matching
+                    );
+
+                    if (matchedTrade) {
+                        txHash = matchedTrade.transactionHash;
+                        proxyWallet = matchedTrade.proxyWallet;
+                        console.log(`[TradeProcessor] ✅ Found Data API trade (Fallback)! Proxy: ${proxyWallet?.slice(0, 12)}..., TxHash: ${txHash?.slice(0, 12)}...`);
+                    } else {
+                        console.log(`[TradeProcessor] ⚠️ No matching trade found by asset via Data API`);
+                    }
+
+                    if (proxyWallet && !trade.proxyWalletAddress) {
+                        trade.proxyWalletAddress = proxyWallet;
+                    }
+
+                    if (txHash) {
+                        trade.transactionHash = txHash;
+                        // Use Alchemy to get real EOA from transaction
+                        const eoa = await this.polygonRpc.getEoaFromTx(txHash);
+                        if (eoa) {
+                            console.log(`[TradeProcessor] ✅ Got EOA from Data API match: ${eoa.slice(0, 12)}...`);
+                            trade.walletAddress = eoa;
+                            if (!trade.proxyWalletAddress) {
+                                trade.proxyWalletAddress = deriveProxyAddress(eoa);
+                            }
                         }
                     }
-
-                    // Also grab proxy wallet from API if available
-                    const firstTrade = recentTrades[0] as any;
-                    if (!proxyWallet) {
-                        proxyWallet = firstTrade.proxyWallet || firstTrade.proxy_wallet
-                            || firstTrade.maker_address || firstTrade.taker_address || null;
-                    }
-                    if (proxyWallet) {
-                        console.log(`[TradeProcessor] ⚡ Got proxy wallet: ${proxyWallet.slice(0, 10)}...`);
-                        trade.proxyWalletAddress = proxyWallet; // Store for Polymarket profile link
-                    }
-                }
-
-                if (txHash) {
-                    console.log(`[TradeProcessor] Got txHash: ${txHash.slice(0, 12)}...`);
-                    trade.transactionHash = txHash;
-                } else {
-                    console.log(`[TradeProcessor] ⚠️ No txHash found in ${recentTrades.length} API trades`);
-                }
-            }
-
-            // Store proxy wallet for Polymarket profile link BEFORE overwriting with EOA
-            if (proxyWallet && !trade.proxyWalletAddress) {
-                trade.proxyWalletAddress = proxyWallet;
-            }
-
-            // Use Alchemy to get real EOA from transaction
-            if (txHash) {
-                const eoa = await this.polygonRpc.getEoaFromTx(txHash);
-                if (eoa) {
-                    console.log(`[TradeProcessor] ✅ Got REAL EOA from tx.from: ${eoa.slice(0, 12)}...`);
-                    console.log(`[TradeProcessor] 📦 Stored proxy for Polymarket: ${proxyWallet?.slice(0, 12) || 'N/A'}...`);
-                    trade.walletAddress = eoa;
-                }
-            }
-
-            // FALLBACK: If still no wallet, try to find EOA from proxy address via Alchemy
-            if (!trade.walletAddress && this.polygonRpc) {
-                // Try to get ANY wallet address from the WebSocket trade data
-                const rawTrade = trade as any;
-                const proxyAddress = rawTrade.maker_address || rawTrade.taker_address
-                    || rawTrade.maker || rawTrade.taker;
-
-                if (proxyAddress) {
-                    console.log(`[TradeProcessor] 🔍 Looking up EOA from proxy: ${proxyAddress.slice(0, 10)}...`);
-                    const eoa = await this.polygonRpc.getEoaFromProxyAddress(proxyAddress);
-                    if (eoa) {
-                        console.log(`[TradeProcessor] ✅ Got REAL EOA from proxy lookup: ${eoa.slice(0, 12)}...`);
-                        trade.walletAddress = eoa;
-                    }
-                }
-            }
-
-            // FINAL FALLBACK: Query on-chain OrderFilled events for this asset
-            if (!trade.walletAddress && this.polygonRpc) {
-                console.log(`[TradeProcessor] 🔗 Searching on-chain for trade...`);
-                const eoa = await this.polygonRpc.findRecentTradeEoa(trade.marketId, trade.shares, 200);
-                if (eoa) {
-                    console.log(`[TradeProcessor] ✅ Got REAL EOA from on-chain events: ${eoa.slice(0, 12)}...`);
-                    trade.walletAddress = eoa;
                 }
             }
         }

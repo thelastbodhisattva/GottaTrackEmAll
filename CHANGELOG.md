@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [2.2.1] - 2026-01-26
+
+Fixed the things that were actually broken. Profile links (hopefully)work now, and the duplicate alerts are gone.
+
+### Fixed
+
+- **Polymarket profile links**: We were checking `tx.to` (which is just the fee contract) or the relayer. Now we grab the actual `taker` (or `maker` if limit order) directly from the event log. The links finally go to the real trader.
+- **Duplicate trade alerts**: Same trade was showing up with different trade IDs. Added a content hash check (asset + size + price + side) so we don't ping you twice for the same bet.
+- **MongoDB race conditions**: Switched wallet updates to atomic upserts. No more "duplicate key" crashes when two trades hit a new wallet at the exact same time.
+
 ## [2.2.0] - 2026-01-24
 
 Telegram alerts, anomaly filtering, and some under-the-hood polish. Performance got a bump too.

@@ -191,6 +191,8 @@ export class PolymarketWebSocket extends EventEmitter {
      * Polymarket sends various event types including price_change, last_trade_price
      */
     private handleMessage(data: Buffer): void {
+        this.messageCount++;
+
         try {
             const dataStr = data.toString();
 
@@ -277,6 +279,7 @@ export class PolymarketWebSocket extends EventEmitter {
         else if (message.type === 'subscribed' || message.channel) {
             console.log(`[WS] Subscription confirmed`);
         }
+        // Ignore other event types (book updates, etc.)
     }
 
     /**
@@ -287,7 +290,7 @@ export class PolymarketWebSocket extends EventEmitter {
         const elapsed = (now - this.lastStatsTime) / 1000;
 
         if (elapsed >= 30) {
-            // Reset counters (no logging - keep console clean)
+            // Reset counters silently
             this.lastStatsTime = now;
             this.tradeEmitCount = 0;
         }
