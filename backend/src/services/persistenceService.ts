@@ -41,6 +41,11 @@ export class PersistenceService {
                         marketOutcome: null,
                         tradeWon: null,
                         pnl: null,
+                        transactionHash: trade.transactionHash || null,
+                        proxyWalletAddress: trade.proxyWalletAddress || null,
+                        shares: trade.shares || null,
+                        feeUsd: trade.feeUsd || null,
+                        cost: trade.cost || null,
                     },
                 },
                 { upsert: true, new: true }

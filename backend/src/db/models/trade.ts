@@ -39,6 +39,12 @@ export interface ITrade extends Document {
     preAnnouncementScore: number;
     priceAfter1h: number | null;
     priceMovePercent: number | null;
+    // On-chain details
+    transactionHash: string | null;
+    proxyWalletAddress: string | null;
+    shares: number | null;
+    feeUsd: number | null;
+    cost: number | null;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -79,6 +85,12 @@ const tradeSchema = new Schema<ITrade>(
         preAnnouncementScore: { type: Number, default: 0 },
         priceAfter1h: { type: Number, default: null },
         priceMovePercent: { type: Number, default: null },
+        // On-chain details
+        transactionHash: { type: String, default: null, index: true },
+        proxyWalletAddress: { type: String, default: null, index: true },
+        shares: { type: Number, default: null },
+        feeUsd: { type: Number, default: null },
+        cost: { type: Number, default: null },
     },
     {
         timestamps: true,

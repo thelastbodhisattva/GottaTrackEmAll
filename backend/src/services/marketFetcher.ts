@@ -242,7 +242,7 @@ export class MarketFetcher {
      * Limit prevents over-subscribing (e.g. < 15k markets)
      */
     async fetchActiveMarkets(limit: number = 2000, minLiquidity: number = 10000): Promise<GammaMarket[]> {
-        const pageSize = 500;
+        const pageSize = 100;
         let offset = 0;
         const allMarkets: GammaMarket[] = [];
         let running = true;
@@ -275,7 +275,11 @@ export class MarketFetcher {
                     running = false;
                 } else {
                     offset += pageSize;
-                    await new Promise(resolve => setTimeout(resolve, 100));
+                    if (offset >= 10000) {
+                        running = false;
+                    } else {
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                    }
                 }
             } catch (error) {
                 console.error(`[MarketFetcher] Error fetching page at offset ${offset}:`, error);

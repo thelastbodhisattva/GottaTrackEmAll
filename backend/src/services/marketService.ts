@@ -189,40 +189,51 @@ export class MarketService {
      * The Gamma API stores token IDs in the clobTokenIds field
      */
     private async fetchMarketByTokenId(tokenId: string): Promise<Market | null> {
+        const GAMMA_API_KEYSET_URL = 'https://gamma-api.polymarket.com/markets/keyset';
         try {
-            // Query Gamma API - it returns markets where clobTokenIds contains this token
-            const response = await fetch(`${GAMMA_API_URL}?clob_token_ids=${tokenId}&limit=1`);
+            // Query Gamma API Keyset - it returns markets where clobTokenIds contains this token
+            let response = await fetch(`${GAMMA_API_KEYSET_URL}?clob_token_ids=${tokenId}`);
 
             if (!response.ok) {
-                if (response.status === 404) {
-                    return null;
-                }
-                throw new Error(`Gamma API error: ${response.status}`);
+                throw new Error(`Gamma API keyset error: ${response.status}`);
             }
 
-            const markets = await response.json() as Array<{
-                id: string;
-                conditionId: string;
-                questionId?: string;
-                question: string;
-                description: string;
-                outcomes?: string;
-                endDate?: string;
-                volume?: string;
-                liquidity?: string;
-                active?: boolean;
-                closed?: boolean;
-                resolved?: boolean;
-                clobTokenIds?: string;
-                slug?: string;  // Market slug for URL
-                events?: Array<{ slug?: string; ticker?: string }>;  // Event info
-            }>;
+            let result = await response.json() as {
+                markets?: Array<{
+                    id: string;
+                    conditionId: string;
+                    questionId?: string;
+                    question: string;
+                    description: string;
+                    outcomes?: string;
+                    endDate?: string;
+                    volume?: string;
+                    liquidity?: string;
+                    active?: boolean;
+                    closed?: boolean;
+                    resolved?: boolean;
+                    clobTokenIds?: string;
+                    slug?: string;  // Market slug for URL
+                    events?: Array<{ slug?: string; ticker?: string }>;  // Event info
+                }>;
+            };
 
-            if (!markets || markets.length === 0) {
+            // Fallback for closed/resolved markets
+            if (!result.markets || result.markets.length === 0) {
+                console.log(`[MarketService] Token ${tokenId} not found in active markets keyset. Trying closed=true...`);
+                response = await fetch(`${GAMMA_API_KEYSET_URL}?clob_token_ids=${tokenId}&closed=true`);
+                if (response.ok) {
+                    result = await response.json() as typeof result;
+                } else {
+                    console.warn(`[MarketService] Gamma API keyset fallback error: ${response.status}`);
+                }
+            }
+
+            if (!result.markets || result.markets.length === 0) {
                 return null;
             }
 
-            const data = markets[0];
+            const data = result.markets[0];
 
             // Parse outcomes if string
             let outcomes: string[] = [];
@@ -266,6 +277,7 @@ export class MarketService {
                 resolutionOutcome: '',
                 slug: data.slug,           // Store market slug for URL
                 eventSlug: eventSlug,      // Store event slug for URL
+                clobTokenIds: data.clobTokenIds, // Store clobTokenIds for YES/NO mapping
             };
 
             // Cache the market by BOTH conditionId AND tokenId

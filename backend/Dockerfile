@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install dependencies
 COPY package*.json ./
-RUN npm ci
+RUN npm install --no-audit --no-fund
 
 # Copy source and build
 COPY . .
@@ -21,7 +21,7 @@ RUN apk add --no-cache curl
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
 
-RUN npm ci --omit=dev
+RUN npm install --omit=dev --no-audit --no-fund
 
 EXPOSE 3001
 

@@ -248,6 +248,12 @@ export class TradeProcessor {
                     console.log(`[TradeProcessor] 📦 Using on-chain proxy: ${trade.proxyWalletAddress.slice(0, 12)}...`);
                 }
 
+                trade.transactionHash = onChainResult.transactionHash;
+                trade.shares = onChainResult.shares;
+                trade.sizeUsd = trade.shares * trade.price;
+                trade.feeUsd = onChainResult.feeUsd;
+                trade.cost = trade.sizeUsd + (onChainResult.feeUsd || 0);
+
                 // VERIFY PROFILE: Check if the Proxy actually has a profile on Polymarket
                 // Some wallets (e.g. older proxies or specific AA wallets) might show 0 trades for the proxy
                 // while the EOA has the history.
@@ -322,6 +328,17 @@ export class TradeProcessor {
 
                     if (txHash) {
                         trade.transactionHash = txHash;
+
+                        // Fetch exact shares and fee from the transaction receipt
+                        const details = await this.polygonRpc.getTradeDetailsFromTx(txHash, trade.marketId);
+                        if (details) {
+                            trade.shares = details.shares;
+                            trade.sizeUsd = trade.shares * trade.price;
+                            trade.feeUsd = details.feeUsd;
+                            trade.cost = trade.sizeUsd + (details.feeUsd || 0);
+                            console.log(`[TradeProcessor] 💰 Decoded fallback exact details from Tx: shares=${trade.shares}, feeUsd=${trade.feeUsd}`);
+                        }
+
                         // Use Alchemy to get real EOA from transaction
                         const eoa = await this.polygonRpc.getEoaFromTx(txHash);
                         if (eoa) {
@@ -347,6 +364,20 @@ export class TradeProcessor {
             // Store slug for Polymarket URL construction in Discord alerts
             (trade as any).marketSlug = market.slug;
             (trade as any).eventSlug = market.eventSlug;
+
+            // Map token ID to YES/NO side
+            if (market.clobTokenIds) {
+                try {
+                    const tokenIds = JSON.parse(market.clobTokenIds) as string[];
+                    if (tokenIds[0] === trade.marketId) {
+                        trade.side = 'YES';
+                    } else if (tokenIds[1] === trade.marketId) {
+                        trade.side = 'NO';
+                    }
+                } catch (e) {
+                    console.warn(`[TradeProcessor] Failed to parse clobTokenIds:`, market.clobTokenIds);
+                }
+            }
         } else {
             console.warn(`[TradeProcessor] Market not found for ${trade.marketId.slice(0, 10)}...`);
         }

@@ -42,8 +42,12 @@ console.log(`   Insider Score Threshold: ${config.insiderScoreThreshold}`);
 // Connect to MongoDB
 connectToMongoDB().then(() => {
     console.log('📦 MongoDB connection initialized');
+    // Start outcome tracking (polls for resolved markets every 15 min)
+    outcomeTracker.startPolling();
 }).catch((_err) => {
     console.warn('📦 MongoDB not available, running in memory-only mode');
+    // Start outcome tracking anyway in memory-only/degraded mode
+    outcomeTracker.startPolling();
 });
 
 // Clients
@@ -85,9 +89,6 @@ const polymarketWs = new PolymarketWebSocket();
 
 // Send test alert on startup
 alertService.sendTestMessage().catch(console.error);
-
-// Start outcome tracking (polls for resolved markets every 15 min)
-outcomeTracker.startPolling();
 
 // Start pre-announcement timing checks (every 15 min)
 const preAnnouncementInterval = setInterval(async () => {

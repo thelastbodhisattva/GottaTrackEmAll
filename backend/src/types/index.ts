@@ -53,6 +53,7 @@ export interface Trade {
     won?: boolean;
     payout?: number;
     cost?: number;
+    feeUsd?: number;
 }
 
 /** Trade enriched with insider score and wallet profile */
@@ -182,6 +183,7 @@ export interface Market {
     resolutionOutcome?: string;
     slug?: string;        // Market slug for URL construction
     eventSlug?: string;   // Event slug (some markets are grouped under events)
+    clobTokenIds?: string; // JSON string of [yesTokenId, noTokenId]
 }
 
 // ============================================================================

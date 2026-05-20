@@ -143,10 +143,14 @@ export class AlertService {
             ? `${trade.walletAddress.slice(0, 6)}...${trade.walletAddress.slice(-4)}`
             : 'Unknown';
 
+        const sizeText = trade.feeUsd && trade.cost
+            ? `*$${trade.sizeUsd.toLocaleString()}* (Total: *$${trade.cost.toLocaleString()}* incl. *$${trade.feeUsd.toFixed(2)}* fee)`
+            : `*$${trade.sizeUsd.toLocaleString()}*`;
+
         const lines = [
             `${emoji} *${isFlagged ? 'INSIDER ALERT' : 'Whale Trade'}*`,
             ``,
-            `💰 *$${trade.sizeUsd.toLocaleString()}* ${trade.side} @ ${(trade.price * 100).toFixed(1)}%`,
+            `💰 ${sizeText} ${trade.side} @ ${(trade.price * 100).toFixed(1)}%`,
             `📊 ${trade.marketTitle.slice(0, 50)}${trade.marketTitle.length > 50 ? '...' : ''}`,
             `🏷️ ${trade.marketCategory.toUpperCase()}`,
         ];
@@ -235,7 +239,9 @@ export class AlertService {
         const fields: Array<{ name: string; value: string; inline?: boolean }> = [
             {
                 name: '💰 Trade Size',
-                value: `$${trade.sizeUsd.toLocaleString()}`,
+                value: trade.feeUsd && trade.cost
+                    ? `**Net:** $${trade.sizeUsd.toLocaleString()}\n**Fee:** $${trade.feeUsd.toFixed(2)}\n**Total:** $${trade.cost.toLocaleString()}`
+                    : `$${trade.sizeUsd.toLocaleString()}`,
                 inline: true,
             },
             {
@@ -409,7 +415,11 @@ export class AlertService {
         const header = trade.isFlagged ? 'INSIDER SIGNAL DETECTED' : 'YAHAHA KENA CEPU';
 
         let msg = `${emoji} **${header}**\n\n`;
-        msg += `💰 Size: $${trade.sizeUsd.toLocaleString()}\n`;
+        if (trade.feeUsd && trade.cost) {
+            msg += `💰 Size: $${trade.sizeUsd.toLocaleString()} (Total: $${trade.cost.toLocaleString()} incl. $${trade.feeUsd.toFixed(2)} fee)\n`;
+        } else {
+            msg += `💰 Size: $${trade.sizeUsd.toLocaleString()}\n`;
+        }
         msg += `📊 Market: ${trade.marketTitle}\n`;
         msg += `🎯 Position: ${trade.side} @ ${(trade.price * 100).toFixed(1)}%\n`;
         msg += `👛 Wallet: ${trade.walletAddress?.slice(0, 8) || 'Unknown'}...${trade.walletAddress?.slice(-6) || ''}\n`;
@@ -517,7 +527,9 @@ export class AlertService {
             },
             {
                 name: '💰 Trade Size',
-                value: `$${trade.sizeUsd.toLocaleString()} (${((trade.sizeUsd / threshold) * 100).toFixed(0)}% of threshold)`,
+                value: trade.feeUsd && trade.cost
+                    ? `**Net:** $${trade.sizeUsd.toLocaleString()}\n**Fee:** $${trade.feeUsd.toFixed(2)}\n**Total:** $${trade.cost.toLocaleString()} (${((trade.cost / threshold) * 100).toFixed(0)}% of threshold)`
+                    : `$${trade.sizeUsd.toLocaleString()} (${((trade.sizeUsd / threshold) * 100).toFixed(0)}% of threshold)`,
                 inline: false,
             },
             {

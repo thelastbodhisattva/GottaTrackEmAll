@@ -85,7 +85,13 @@ You'll need MongoDB and Redis running locally, or point to remote instances via 
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token (get from @BotFather) | Optional |
 | `TELEGRAM_CHAT_ID` | Telegram chat/group ID | Optional |
 
-## Latest Updates (v2.2.2)
+## Latest Updates (v2.3.0)
+
+- **On-Chain Fee & Total Cost Tracking**: Calculates transaction fees (`feeUsd`) and total cost (`cost`) paid by the trader, accounting for network and exchange-level trading fees.
+- **High-Accuracy ERC1155 Net Shares Tracker**: Uses ERC1155 `TransferSingle` and `TransferBatch` logs to track net token balance changes for the target asset. This resolves double-counting and correctly handles complex batch/rebalanced orders.
+- **Enhanced Discord/Telegram Alerting**: Displays transaction fees, net trade sizes, and total transaction costs directly in alert messages.
+
+## From v2.2.2
 
 - **Smart Profile Resolution**: Automatically detects if a wallet is a Proxy, Kernel, or EOA and links to the one that actually has the trade history. No more 404s.
 - **Enhanced Telegram Alerts**: Alerts now give you direct links to both the Polymarket profile and the on-chain EOA for deep diving.

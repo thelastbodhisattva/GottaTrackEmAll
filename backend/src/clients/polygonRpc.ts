@@ -5,8 +5,11 @@ import { config } from '../config/index.js';
  * Polymarket Exchange Contract Addresses (Polygon Mainnet)
  */
 const EXCHANGE_ADDRESSES = [
-    '0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e'.toLowerCase(), // CTF Exchange (Binary YES/NO)
-    '0xc5d563a36ae78145c45a50134d48a1215220f80a'.toLowerCase(), // NegRisk CTF Exchange (Multi-outcome)
+    '0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e'.toLowerCase(), // V1 CTF Exchange (Binary YES/NO)
+    '0xc5d563a36ae78145c45a50134d48a1215220f80a'.toLowerCase(), // V1 NegRisk CTF Exchange (Multi-outcome)
+    '0xe111180000d2663c0091e4f400237545b87b996b'.toLowerCase(), // V2 CTF Exchange
+    '0xe2222d279d744050d28e00520010520000310f59'.toLowerCase(), // V2 NegRisk Exchange A
+    '0xe2222d002000ba0053cef3375333610f64600036'.toLowerCase(), // V2 NegRisk Exchange B
 ];
 
 /**
@@ -17,10 +20,17 @@ const PROXY_FACTORY = '0xaB45c5A4B0c941a2F231C04C3f49182e1A254052';
 const PROXY_INIT_CODE_HASH = '0xd21df8dc65880a8606f09fe0ce3df9b8869287ab0b058be05aa9e8af6330a00b';
 
 /**
- * OrderFilled Event ABI for decoding transaction logs
+ * OrderFilled Event ABI (V1) for decoding transaction logs
  */
-const ORDER_FILLED_EVENT_ABI = [
+const ORDER_FILLED_EVENT_ABI_V1 = [
     'event OrderFilled(bytes32 indexed orderHash, address indexed maker, address indexed taker, uint256 makerAssetId, uint256 takerAssetId, uint256 makerAmountFilled, uint256 takerAmountFilled, uint256 fee)'
+];
+
+/**
+ * OrderFilled Event ABI (V2) for decoding transaction logs
+ */
+const ORDER_FILLED_EVENT_ABI_V2 = [
+    'event OrderFilled(bytes32 indexed orderHash, address indexed maker, address indexed taker, uint8 side, uint256 tokenId, uint256 makerAmountFilled, uint256 takerAmountFilled, uint256 fee, bytes32 builder, bytes32 metadata)'
 ];
 
 /**
@@ -64,7 +74,9 @@ const RATE_LIMIT = {
  */
 export class PolygonRpcClient {
     private provider: ethers.JsonRpcProvider | null = null;
-    private iface: ethers.Interface;
+    private ifaceV1: ethers.Interface;
+    private ifaceV2: ethers.Interface;
+    private ifaceErc1155: ethers.Interface;
     private lastRequestTime = 0;
     private walletCache = new Map<string, string>(); // txHash -> walletAddress
     private cacheMaxSize = 500;
@@ -83,7 +95,12 @@ export class PolygonRpcClient {
             this.provider = new ethers.JsonRpcProvider('https://polygon-rpc.com');
             this.isAlchemy = false;
         }
-        this.iface = new ethers.Interface(ORDER_FILLED_EVENT_ABI);
+        this.ifaceV1 = new ethers.Interface(ORDER_FILLED_EVENT_ABI_V1);
+        this.ifaceV2 = new ethers.Interface(ORDER_FILLED_EVENT_ABI_V2);
+        this.ifaceErc1155 = new ethers.Interface([
+            'event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)',
+            'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)'
+        ]);
     }
 
     /**
@@ -186,9 +203,9 @@ export class PolygonRpcClient {
      * @param assetId - The token ID (asset_id) from the trade
      * @param approximateSize - The approximate trade size in shares
      * @param blockRange - How many recent blocks to search (default 200)
-     * @returns Object with EOA and proxy address, or null if not found
+     * @returns Object with EOA, proxy address, transactionHash, feeUsd, shares, or null if not found
      */
-    async findRecentTradeWithProxy(assetId: string, approximateSize: number, blockRange: number = 50): Promise<{ eoa: string; proxyAddress: string } | null> {
+    async findRecentTradeWithProxy(assetId: string, approximateSize: number, blockRange: number = 50): Promise<{ eoa: string; proxyAddress: string; transactionHash: string; feeUsd: number; shares: number } | null> {
         if (!this.provider) {
             return null;
         }
@@ -210,21 +227,26 @@ export class PolygonRpcClient {
             // We wait up to 30 seconds (6 attempts * 5s) for the block to be mined.
             const MAX_RETRIES = 6;
             const RETRY_DELAY_MS = 5000;
-            const VOLUME_THRESHOLD_PERCENT = 0.01; // 1% threshold to filter unrelated noise/dust
 
-            // Heuristic threshold: if found volume is < 1% of expected, it's likely noise or partial fill
-            const targetVolumeThreshold = BigInt(Math.floor(approximateSize * VOLUME_THRESHOLD_PERCENT * 1000));
+            // Volume threshold: matched on-chain volume must be at least 10% of expected trade size.
+            // WebSocket `approximateSize` is in USDC (e.g. 6432.181).
+            // On-chain amounts use 6 decimal places (1 USDC = 1_000_000 raw units).
+            // 10% threshold prevents matching unrelated small trades for the same asset.
+            const MIN_MATCH_PERCENT = 0.10;
+            const targetVolumeThreshold = BigInt(Math.floor(approximateSize * MIN_MATCH_PERCENT * 1_000_000));
 
             for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
                 // Refresh block number on each attempt to catch new blocks
-                const currentBlockNow = await this.provider.getBlockNumber();
+                // Subtract 2 blocks as safety buffer to avoid tip block indexing lag in eth_getLogs
+                const currentBlockNow = Math.max(0, await this.provider.getBlockNumber() - 2);
                 const startBlockNow = currentBlockNow - blockRange;
 
                 console.log(`[PolygonRpc] 🔄 Attempt ${attempt}/${MAX_RETRIES}: Scanning logs from ${startBlockNow} to ${currentBlockNow} for asset ${assetId}...`);
 
-                // Get OrderFilled topic
-                const orderFilledTopic = this.iface.getEvent("OrderFilled")?.topicHash;
-                if (!orderFilledTopic) {
+                // Get OrderFilled topic hashes for V1 and V2
+                const topicV1 = this.ifaceV1.getEvent("OrderFilled")?.topicHash;
+                const topicV2 = this.ifaceV2.getEvent("OrderFilled")?.topicHash;
+                if (!topicV1 || !topicV2) {
                     return null;
                 }
 
@@ -242,42 +264,89 @@ export class PolygonRpcClient {
                     await this.rateLimit();
 
                     try {
-                        const logs = await this.provider.getLogs({
-                            fromBlock: fromBlock,
-                            toBlock: toBlock,
-                            address: ALL_EXCHANGE_ADDRESSES,
-                            topics: [orderFilledTopic]
-                        });
+                        let logs: Array<any> = [];
+                        try {
+                            logs = await this.provider.getLogs({
+                                fromBlock: fromBlock,
+                                toBlock: toBlock,
+                                address: ALL_EXCHANGE_ADDRESSES,
+                                topics: [[topicV1, topicV2]]
+                            });
+                        } catch (err: any) {
+                            if (err.message?.includes('invalid block range') || err.message?.includes('-32000') || err.message?.includes('unknown block')) {
+                                console.log(`[PolygonRpc] ⏳ Node not synced to block ${toBlock} yet, waiting 2s to retry chunk...`);
+                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                logs = await this.provider.getLogs({
+                                    fromBlock: fromBlock,
+                                    toBlock: toBlock,
+                                    address: ALL_EXCHANGE_ADDRESSES,
+                                    topics: [[topicV1, topicV2]]
+                                });
+
+                            } else {
+                                throw err;
+                            }
+                        }
 
                         for (const log of logs) {
                             try {
-                                const parsed = this.iface.parseLog({
+                                let parsed = null;
+                                let isV2 = false;
+
+                                // ethers v6: parseLog() returns null on topic mismatch (does NOT throw).
+                                // Must use null-check fallback, not try/catch.
+                                parsed = this.ifaceV1.parseLog({
                                     topics: log.topics as string[],
                                     data: log.data
                                 });
 
+                                if (!parsed) {
+                                    // V1 didn't match this log's topic, try V2
+                                    parsed = this.ifaceV2.parseLog({
+                                        topics: log.topics as string[],
+                                        data: log.data
+                                    });
+                                    if (parsed) {
+                                        isV2 = true;
+                                    }
+                                }
+
                                 if (parsed && parsed.name === 'OrderFilled') {
-                                    const makerAssetId = BigInt(parsed.args.makerAssetId);
-                                    const takerAssetId = BigInt(parsed.args.takerAssetId);
+                                    let makerAssetId: bigint;
+                                    let takerAssetId: bigint;
                                     const maker = parsed.args.maker.toLowerCase();
                                     const taker = parsed.args.taker.toLowerCase();
+                                    const makerAmountFilled = BigInt(parsed.args.makerAmountFilled);
+                                    const takerAmountFilled = BigInt(parsed.args.takerAmountFilled);
 
-                                    // Identify who is dealing with the target asset (shares)
-                                    // makerAssetId = what MAKER provides | takerAssetId = what TAKER provides
-                                    // If makerAssetId matches → MAKER is providing shares → TAKER buys
-                                    // If takerAssetId matches → TAKER is providing shares → MAKER buys
+                                    if (isV2) {
+                                        const side = Number(parsed.args.side); // 0 = BUY, 1 = SELL
+                                        const tokenId = BigInt(parsed.args.tokenId);
 
-                                    let traderProxy = '';
+                                        if (side === 0) { // BUY
+                                            makerAssetId = 0n; // Maker gives USDC (collateral)
+                                            takerAssetId = tokenId; // Taker gives shares
+                                        } else { // SELL
+                                            makerAssetId = tokenId; // Maker gives shares
+                                            takerAssetId = 0n; // Taker gives USDC (collateral)
+                                        }
+                                    } else {
+                                        makerAssetId = BigInt(parsed.args.makerAssetId);
+                                        takerAssetId = BigInt(parsed.args.takerAssetId);
+
+                                    }
+
+                                    // Determine who the active trader is (taker if not exchange, maker otherwise)
+                                    let traderProxy = taker;
+                                    if (ALL_EXCHANGE_ADDRESSES.includes(taker)) {
+                                        traderProxy = maker;
+                                    }
+
                                     let matchVolume = 0n;
-
                                     if (makerAssetId === targetAssetIdBigInt) {
-                                        // MAKER provides shares → MAKER holds these shares (whale could be MAKER)
-                                        matchVolume = BigInt(parsed.args.makerAmountFilled);
-                                        traderProxy = maker; // Track MAKER (limit order placer who had shares)
+                                        matchVolume = makerAmountFilled;
                                     } else if (takerAssetId === targetAssetIdBigInt) {
-                                        // TAKER provides shares → TAKER holds these shares (whale could be TAKER)
-                                        matchVolume = BigInt(parsed.args.takerAmountFilled);
-                                        traderProxy = taker; // Track TAKER (market order placer who had shares)
+                                        matchVolume = takerAmountFilled;
                                     }
 
                                     if (matchVolume > 0n && traderProxy) {
@@ -297,43 +366,83 @@ export class PolygonRpcClient {
                     }
                 }
 
-                // Find the Taker with the LARGEST volume
-                let maxVolume = 0n;
-                let maxTaker = '';
+                // Match closest volume to target instead of just the largest volume in block range
+                const targetVolume = BigInt(Math.floor(approximateSize * 1_000_000));
+                const targetMinPrimary = (targetVolume * 70n) / 100n;
+                const targetMaxPrimary = (targetVolume * 130n) / 100n;
+                const targetMinSecondary = (targetVolume * 10n) / 100n;
+                const targetMaxSecondary = targetVolume * 10n;
+
+                let bestTaker = '';
+                let bestVolume = 0n;
+                let minDiff = -1n;
+                let inPrimaryRange = false;
 
                 for (const [taker, volume] of takerVolumes.entries()) {
-                    if (volume > maxVolume) {
-                        maxVolume = volume;
-                        maxTaker = taker;
+                    const diff = volume > targetVolume ? volume - targetVolume : targetVolume - volume;
+                    const isPrimary = volume >= targetMinPrimary && volume <= targetMaxPrimary;
+                    const isSecondary = volume >= targetMinSecondary && volume <= targetMaxSecondary;
+
+                    if (!isSecondary) continue;
+
+                    if (isPrimary && !inPrimaryRange) {
+                        inPrimaryRange = true;
+                        bestTaker = taker;
+                        bestVolume = volume;
+                        minDiff = diff;
+                    } else if (isPrimary && inPrimaryRange) {
+                        if (minDiff === -1n || diff < minDiff) {
+                            bestTaker = taker;
+                            bestVolume = volume;
+                            minDiff = diff;
+                        }
+                    } else if (!isPrimary && !inPrimaryRange) {
+                        if (minDiff === -1n || diff < minDiff) {
+                            bestTaker = taker;
+                            bestVolume = volume;
+                            minDiff = diff;
+                        }
                     }
                 }
 
-                console.log(`[PolygonRpc] 📊 Max Volume Found: ${maxVolume.toString()}`);
+                console.log(`[PolygonRpc] 📊 Best Volume Found: ${bestVolume.toString()} (Target: ${targetVolume.toString()})`);
 
-                if (maxTaker && maxVolume >= targetVolumeThreshold) {
-                    const txHash = takerLatestTx.get(maxTaker)!;
+                if (bestTaker) {
+                    const txHash = takerLatestTx.get(bestTaker)!;
                     console.log(`[PolygonRpc] ✅ FOUND MATCHING TRADER (Settled)!`);
                     console.log(`[PolygonRpc] 🔗 Tx: ${txHash}`);
 
-                    // CRITICAL FIX: The taker from OrderFilled IS the user's proxy wallet
-                    // tx.from = Polymarket Relayer (NOT user EOA) - WRONG
-                    // tx.to = Fee Module contract (NOT user proxy) - WRONG
-                    // The TAKER address IS the correct Polymarket profile address
-
-                    // Check if maxTaker is an Exchange/infrastructure contract (shouldn't be, but verify)
-                    if (ALL_EXCHANGE_ADDRESSES.includes(maxTaker)) {
-                        console.warn(`[PolygonRpc] ⚠️ Max taker is Exchange contract, continuing search...`);
+                    // Check if bestTaker is an Exchange/infrastructure contract (shouldn't be, but verify)
+                    if (ALL_EXCHANGE_ADDRESSES.includes(bestTaker)) {
+                        console.warn(`[PolygonRpc] ⚠️ Best taker is Exchange contract, continuing search...`);
                         // Don't return, continue to next retry attempt
                     } else {
                         // The taker IS the user's proxy wallet (this is correct!)
-                        console.log(`[PolygonRpc] 🏆 User Proxy (OrderFilled taker): ${maxTaker.slice(0, 10)}...`);
+                        console.log(`[PolygonRpc] 🏆 User Proxy (OrderFilled taker): ${bestTaker.slice(0, 10)}...`);
 
                         // Try to resolve proxy to EOA owner, but proxy is what matters for profile links
-                        const resolvedEoa = await this.resolveProxyToEoa(maxTaker);
-                        const eoa = resolvedEoa || maxTaker;
+                        const resolvedEoa = await this.resolveProxyToEoa(bestTaker);
+                        const eoa = resolvedEoa || bestTaker;
 
                         console.log(`[PolygonRpc] 🔑 EOA: ${eoa.slice(0, 10)}... (resolved: ${!!resolvedEoa})`);
-                        return { eoa, proxyAddress: maxTaker };
+
+                        // Fetch exact shares and fee from the transaction receipt
+                        let feeUsd = 0;
+                        let shares = approximateSize;
+                        const details = await this.getTradeDetailsFromTx(txHash, assetId);
+                        if (details) {
+                            feeUsd = details.feeUsd;
+                            shares = details.shares;
+                            console.log(`[PolygonRpc] 💰 Decoded exact details from Tx: shares=${shares}, feeUsd=${feeUsd}`);
+                        }
+
+                        return {
+                            eoa,
+                            proxyAddress: bestTaker,
+                            transactionHash: txHash,
+                            feeUsd,
+                            shares
+                        };
                     }
                 }
 
@@ -347,6 +456,157 @@ export class PolygonRpcClient {
             return null;
         } catch (error) {
             console.error(`[PolygonRpc] Error searching on-chain logs:`, error);
+            return null;
+        }
+    }
+
+    /**
+     * Get trade details (shares, fee, taker, maker) from a specific transaction receipt
+     */
+    async getTradeDetailsFromTx(txHash: string, assetId: string): Promise<{
+        shares: number;
+        feeUsd: number;
+        taker: string;
+        maker: string;
+    } | null> {
+        if (!this.provider) return null;
+
+        try {
+            await this.rateLimit();
+            const receipt = await this.provider.getTransactionReceipt(txHash);
+            if (!receipt) return null;
+
+            // Infrastructure contracts to EXCLUDE from being identified as user wallets
+            const ALL_EXCHANGE_ADDRESSES = [
+                ...EXCHANGE_ADDRESSES,
+                '0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296'.toLowerCase(), // NegRisk Adapter
+                '0x78769D50Be1763ed1CA0D5E878D93f05aabff29e'.toLowerCase(), // NegRisk Fee Module
+                '0xe3f18acc55b23a9c69a77fa1e7be3dd0f8e8048d'.toLowerCase(), // CTF Fee Module (from tx.to)
+                '0xD216153c06E857cD7f72665E0aF1d7D82172F494'.toLowerCase(), // Polymarket Relay Hub
+            ];
+
+            // 1. Identify proxyAddress (the user proxy wallet in this trade transaction)
+            let proxyAddress = '';
+            for (const log of receipt.logs) {
+                if (ALL_EXCHANGE_ADDRESSES.includes(log.address.toLowerCase())) {
+                    let parsed = this.ifaceV1.parseLog({
+                        topics: log.topics as string[],
+                        data: log.data
+                    });
+
+                    if (!parsed) {
+                        parsed = this.ifaceV2.parseLog({
+                            topics: log.topics as string[],
+                            data: log.data
+                        });
+                    }
+
+                    if (parsed && parsed.name === 'OrderFilled') {
+                        const maker = parsed.args.maker.toLowerCase();
+                        const taker = parsed.args.taker.toLowerCase();
+                        const trader = ALL_EXCHANGE_ADDRESSES.includes(taker) ? maker : taker;
+                        if (!ALL_EXCHANGE_ADDRESSES.includes(trader)) {
+                            proxyAddress = trader;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!proxyAddress) {
+                console.warn(`[PolygonRpc] No user proxy address identified in tx ${txHash}`);
+                return null;
+            }
+
+            // 2. Compute net shares traded for this proxyAddress from ERC1155 TransferSingle/TransferBatch events
+            let netShares = 0n;
+            const targetAssetIdBigInt = BigInt(assetId);
+
+            for (const log of receipt.logs) {
+                try {
+                    const parsed = this.ifaceErc1155.parseLog({
+                        topics: log.topics as string[],
+                        data: log.data
+                    });
+
+                    if (parsed) {
+                        if (parsed.name === 'TransferSingle') {
+                            const id = BigInt(parsed.args.id);
+                            const value = BigInt(parsed.args.value);
+                            const from = parsed.args.from.toLowerCase();
+                            const to = parsed.args.to.toLowerCase();
+
+                            if (id === targetAssetIdBigInt) {
+                                if (to === proxyAddress) {
+                                    netShares += value;
+                                }
+                                if (from === proxyAddress) {
+                                    netShares -= value;
+                                }
+                            }
+                        } else if (parsed.name === 'TransferBatch') {
+                            const from = parsed.args.from.toLowerCase();
+                            const to = parsed.args.to.toLowerCase();
+                            const ids = parsed.args[3] as any;
+                            const values = parsed.args[4] as any;
+
+                            for (let i = 0; i < ids.length; i++) {
+                                const id = BigInt(ids[i]);
+                                const value = BigInt(values[i]);
+
+                                if (id === targetAssetIdBigInt) {
+                                    if (to === proxyAddress) {
+                                        netShares += value;
+                                    }
+                                    if (from === proxyAddress) {
+                                        netShares -= value;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch {}
+            }
+
+            // 3. Compute total fees paid by proxyAddress across OrderFilled events in this transaction
+            let totalFee = 0n;
+            for (const log of receipt.logs) {
+                if (ALL_EXCHANGE_ADDRESSES.includes(log.address.toLowerCase())) {
+                    let parsed = this.ifaceV1.parseLog({
+                        topics: log.topics as string[],
+                        data: log.data
+                    });
+
+                    if (!parsed) {
+                        parsed = this.ifaceV2.parseLog({
+                            topics: log.topics as string[],
+                            data: log.data
+                        });
+                    }
+
+                    if (parsed && parsed.name === 'OrderFilled') {
+                        const maker = parsed.args.maker.toLowerCase();
+                        const taker = parsed.args.taker.toLowerCase();
+                        if (maker === proxyAddress || taker === proxyAddress) {
+                            totalFee += BigInt(parsed.args.fee || 0n);
+                        }
+                    }
+                }
+            }
+
+            const absShares = netShares < 0n ? -netShares : netShares;
+            if (absShares > 0n) {
+                return {
+                    shares: Number(absShares) / 1_000_000,
+                    feeUsd: Number(totalFee) / 1_000_000,
+                    taker: proxyAddress,
+                    maker: ''
+                };
+            }
+
+            return null;
+        } catch (error) {
+            console.error(`[PolygonRpc] Error getting trade details from tx ${txHash}:`, error);
             return null;
         }
     }
@@ -398,8 +658,11 @@ export class PolygonRpcClient {
             // Parse logs from Polymarket exchange contracts
             for (const log of receipt.logs) {
                 if (EXCHANGE_ADDRESSES.includes(log.address.toLowerCase())) {
-                    try {
-                        const decoded = this.iface.parseLog({
+                    // ethers v6: parseLog returns null on topic mismatch, not throw
+                        const decoded = this.ifaceV1.parseLog({
+                            topics: log.topics as string[],
+                            data: log.data
+                        }) ?? this.ifaceV2.parseLog({
                             topics: log.topics as string[],
                             data: log.data
                         });
@@ -412,9 +675,6 @@ export class PolygonRpcClient {
 
                             return taker;
                         }
-                    } catch {
-                        // Not an OrderFilled event, continue
-                    }
                 }
             }
 
@@ -468,17 +728,17 @@ export class PolygonRpcClient {
 
             for (const log of receipt.logs) {
                 if (EXCHANGE_ADDRESSES.includes(log.address.toLowerCase())) {
-                    try {
-                        const decoded = this.iface.parseLog({
+                    // ethers v6: parseLog returns null on topic mismatch, not throw
+                        const decoded = this.ifaceV1.parseLog({
+                            topics: log.topics as string[],
+                            data: log.data
+                        }) ?? this.ifaceV2.parseLog({
                             topics: log.topics as string[],
                             data: log.data
                         });
                         if (decoded?.name === 'OrderFilled') {
                             return decoded.args.maker as string;
                         }
-                    } catch {
-                        // Continue to next log
-                    }
                 }
             }
 

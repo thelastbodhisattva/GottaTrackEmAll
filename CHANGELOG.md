@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Nothing yet.
 
 
+## [2.3.0] - 2026-05-20
+
+Added transaction fee and exact shares tracking via ERC1155 event decoding.
+
+### Added
+
+- **On-Chain Fee calculation**: Dynamically parses transaction events to sum fees (`feeUsd`) paid by the user's proxy wallet on-chain.
+- **ERC1155 Log Net Shares tracking**: Evaluates net balance change of ERC1155 `TransferSingle` and `TransferBatch` logs for the transacted `assetId` to guarantee 100% accurate share calculation for complex batch/swap transactions.
+- **Enhanced alerting format**: Appends network/exchange fees and total transaction costs (`(shares * price) + feeUsd`) to all Discord, Telegram, and CLI alert channels.
+
+
 ## [2.2.2] - 2026-01-26
 
 Fixed the lingering profile link issues and upgraded Telegram alerts.

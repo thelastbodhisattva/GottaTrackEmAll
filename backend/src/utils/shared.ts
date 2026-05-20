@@ -161,10 +161,16 @@ export function isValidAddress(address: string): boolean {
  * These addresses appear as maker/taker in batch orders but are NOT user wallets.
  */
 export const POLYMARKET_EXCHANGE_ADDRESSES = [
-    // CTF Exchange
-    '0x4bfb41d5b3570de611cb87ec9182931b7140bd9d',
-    // NegRisk Exchange
-    '0xc5d563a36fe3120f2972dd43f5df1455aa8630b5',
+    // V1 CTF Exchange
+    '0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e',
+    // V1 NegRisk Exchange
+    '0xc5d563a36ae78145c45a50134d48a1215220f80a',
+    // V2 CTF Exchange
+    '0xe111180000d2663c0091e4f400237545b87b996b',
+    // V2 NegRisk Exchange A
+    '0xe2222d279d744050d28e00520010520000310f59',
+    // V2 NegRisk Exchange B
+    '0xe2222d002000ba0053cef3375333610f64600036',
     // NegRisk Adapter
     '0xd91e80cf2e7be2e162c6513ced06f1dd0da35296',
     // NegRisk Fee Module
